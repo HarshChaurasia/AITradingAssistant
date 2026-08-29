@@ -1,4 +1,5 @@
 const { applyEntrySlippage, applyExitSlippage, commissionFor, pnlFor } = require('./costs');
+const { sizePosition } = require('../risk/sizing');
 
 /**
  * Bar-by-bar replay of a strategy over historical candles.
@@ -12,31 +13,6 @@ const { applyEntrySlippage, applyExitSlippage, commissionFor, pnlFor } = require
  *   - a lot smaller than the symbol minimum means the trade is skipped, never
  *     rounded up.
  */
-
-function sizePosition({ balance, riskPct, entry, sl, symbol }) {
-  const stopDistance = Math.abs(entry - sl);
-  if (stopDistance <= 0) return 0;
-
-  const riskAmount = balance * (riskPct / 100);
-  const lossPerLot = stopDistance * symbol.contract_size;
-  if (lossPerLot <= 0) return 0;
-
-  const raw = riskAmount / lossPerLot;
-  const step = symbol.lot_step || 0.01;
-
-  // Binary floating point makes a distance like 1.1 - 1.09 come out as
-  // 0.010000000000000009, which floors one whole step too low and silently
-  // under-sizes every position. Absorb that noise before flooring.
-  const steps = Math.floor(Number((raw / step).toFixed(8)));
-  const rounded = steps * step;
-
-  // Below the broker minimum the trade is refused. Rounding up would silently
-  // multiply the intended risk, which on a small account is fatal.
-  if (rounded < (symbol.min_lot || 0.01)) return 0;
-  if (symbol.max_lot && rounded > symbol.max_lot) return symbol.max_lot;
-
-  return Number(rounded.toFixed(4));
-}
 
 function resolveExit({ position, candle, spreadPrice, slippagePrice }) {
   const { side, sl, tp } = position;
@@ -90,7 +66,7 @@ function runBacktest({ candles, strategy, params, symbol, options }) {
       const entryPrice = applyEntrySlippage({
         side: pending.side, price: candle.open, spreadPrice, slippagePrice
       });
-      const lot = sizePosition({
+      const { lot } = sizePosition({
         balance, riskPct: riskPctPerTrade, entry: entryPrice, sl: pending.sl, symbol
       });
 
@@ -175,4 +151,4 @@ function runBacktest({ candles, strategy, params, symbol, options }) {
   return { trades, signals };
 }
 
-module.exports = { runBacktest, sizePosition };
+module.exports = { runBacktest };
