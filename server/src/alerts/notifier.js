@@ -11,6 +11,14 @@ async function sendAlert(text, {
   chatId = process.env.TELEGRAM_CHAT_ID,
   logger = console
 } = {}) {
+  // Belt: the test suite exercises the execution path with stub brokers, and
+  // those paths call the real alert helpers. Without this, running the tests
+  // sends fictional fills to a real phone - which happened, with the stub
+  // ticket numbers 555, 777 and 888 arriving as if they were trades.
+  if (process.env.NODE_ENV === 'test') {
+    return { sent: false, reason: 'alerts are disabled under NODE_ENV=test' };
+  }
+
   if (!botToken || !chatId) {
     return { sent: false, reason: 'alerts are not configured' };
   }

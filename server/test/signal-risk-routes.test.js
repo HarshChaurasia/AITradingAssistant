@@ -1,3 +1,4 @@
+require('./helpers/no-alerts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');

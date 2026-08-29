@@ -87,3 +87,49 @@ test('an alert failure inside an event helper does not propagate', async () => {
   // the trading path that called it.
   await events.alertKillSwitch({ mode: 'demo', reason: 'x', send, logger: { error: () => {} } });
 });
+
+test('no alert leaves the machine while NODE_ENV is test', async () => {
+  // This is the guard that stopped the test suite from texting fictional
+  // fills to a real phone: stub tickets 555, 777 and 888 arrived on Telegram
+  // looking exactly like live trades.
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
+
+  const fetchImpl = stubFetch();
+  const result = await sendAlert('this must never be delivered', {
+    fetchImpl, botToken: 'REAL-LOOKING-TOKEN', chatId: '123456'
+  });
+
+  process.env.NODE_ENV = previous;
+
+  assert.equal(result.sent, false);
+  assert.match(result.reason, /NODE_ENV=test/);
+  assert.equal(fetchImpl.calls.length, 0, 'not a single outbound request may be made');
+});
+
+test('the event helpers are silent under test even with a token configured', async () => {
+  const events = require('../src/alerts/events');
+  const previous = process.env.NODE_ENV;
+  const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+  const previousChat = process.env.TELEGRAM_CHAT_ID;
+
+  process.env.NODE_ENV = 'test';
+  process.env.TELEGRAM_BOT_TOKEN = 'looks-real';
+  process.env.TELEGRAM_CHAT_ID = '999';
+
+  const realFetch = globalThis.fetch;
+  let attempted = 0;
+  globalThis.fetch = async () => { attempted += 1; return { ok: true, text: async () => 'ok' }; };
+
+  try {
+    await events.alertOrderFilled({ symbol: 'XAUUSD', side: 'BUY', lot: 1, ticket: 555, mode: 'demo' });
+    await events.alertKillSwitch({ mode: 'demo', reason: 'test' });
+  } finally {
+    globalThis.fetch = realFetch;
+    process.env.NODE_ENV = previous;
+    process.env.TELEGRAM_BOT_TOKEN = previousToken;
+    process.env.TELEGRAM_CHAT_ID = previousChat;
+  }
+
+  assert.equal(attempted, 0, 'the execution tests must not be able to reach Telegram');
+});
