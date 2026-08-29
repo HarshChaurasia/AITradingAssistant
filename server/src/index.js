@@ -64,6 +64,10 @@ const { createAiRouter } = require('./routes/ai');
 
 app.use('/api', createAiRouter());
 
+const { createScannerRouter } = require('./routes/scanner');
+
+app.use('/api', createScannerRouter());
+
 // Opt-in: an unattended loop should never start just because the server did.
 if (process.env.SCHEDULER_ENABLED === 'true') {
   scheduler.start();

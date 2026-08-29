@@ -82,6 +82,13 @@ export const api = {
   closeTrade: (tradeId) => request(`/api/execution/close/${tradeId}`, { method: 'POST' }),
   commentary: (symbolId, timeframe = 'H1') =>
     request(`/api/commentary?symbolId=${symbolId}&timeframe=${timeframe}`),
+  scanner: (timeframe = 'H4') => request(`/api/scanner?timeframe=${timeframe}`),
+  setSymbolWatched: (id, watched) =>
+    request(`/api/symbols/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ watched })
+    }),
   strategies: () => request('/api/strategies'),
   backtests: () => request('/api/backtests'),
   backtest: (id) => request(`/api/backtests/${id}`),

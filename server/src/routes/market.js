@@ -1,6 +1,6 @@
 const express = require('express');
 
-const { syncSymbols, listSymbols, setSymbolEnabled } = require('../market/symbols');
+const { syncSymbols, listSymbols, setSymbolEnabled, setSymbolWatched } = require('../market/symbols');
 const { syncCandles, getCandles, TIMEFRAMES } = require('../market/candles');
 const { query } = require('../db/pool');
 
@@ -27,7 +27,10 @@ function createMarketRouter({ bridge }) {
 
   router.get('/symbols', async (req, res, next) => {
     try {
-      res.json(await listSymbols({ enabledOnly: req.query.enabledOnly === '1' }));
+      res.json(await listSymbols({
+        enabledOnly: req.query.enabledOnly === '1',
+        watchedOnly: req.query.watchedOnly === '1'
+      }));
     } catch (error) {
       next(error);
     }
@@ -43,10 +46,13 @@ function createMarketRouter({ bridge }) {
 
   router.patch('/symbols/:id', async (req, res, next) => {
     try {
-      if (typeof req.body?.enabled !== 'boolean') {
-        return res.status(400).json({ error: 'body must be { enabled: boolean }' });
+      const { enabled, watched } = req.body || {};
+      if (typeof enabled !== 'boolean' && typeof watched !== 'boolean') {
+        return res.status(400).json({ error: 'body must include { enabled: boolean } or { watched: boolean }' });
       }
-      await setSymbolEnabled(Number(req.params.id), req.body.enabled);
+      // Two independent flags: watching a symbol must never make it tradeable.
+      if (typeof enabled === 'boolean') await setSymbolEnabled(Number(req.params.id), enabled);
+      if (typeof watched === 'boolean') await setSymbolWatched(Number(req.params.id), watched);
       res.json({ ok: true });
     } catch (error) {
       next(error);

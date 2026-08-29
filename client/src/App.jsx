@@ -5,6 +5,7 @@ import Signals from './pages/Signals';
 import Risk from './pages/Risk';
 import Trades from './pages/Trades';
 import Login from './pages/Login';
+import Scanner from './pages/Scanner';
 import { api } from './api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -54,6 +55,7 @@ function App() {
         <nav>
           <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}>Overview</button>
           <button className={view === 'markets' ? 'nav active' : 'nav'} onClick={() => setView('markets')}>Markets</button>
+          <button className={view === 'scanner' ? 'nav active' : 'nav'} onClick={() => setView('scanner')}>Scanner</button>
           <button className={view === 'signals' ? 'nav active' : 'nav'} onClick={() => setView('signals')}>Signals</button>
           <button className={view === 'backtests' ? 'nav active' : 'nav'} onClick={() => setView('backtests')}>Backtests</button>
           <button className={view === 'execution' ? 'nav active' : 'nav'} onClick={() => setView('execution')}>Execution</button>
@@ -77,6 +79,7 @@ function App() {
 
         {view === 'markets' ? <Markets />
           : view === 'backtests' ? <Backtests />
+          : view === 'scanner' ? <Scanner />
           : view === 'signals' ? <Signals />
           : view === 'execution' ? <Trades />
           : view === 'risk' ? <Risk />

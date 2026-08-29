@@ -62,7 +62,10 @@ function createScheduler({
       return lastResult;
     }
 
-    const symbols = await listSymbolsFn({ enabledOnly: true });
+    // Candles are synced for watched symbols as well, so the scanner has
+    // fresh data. Signal generation and execution below still read `enabled`
+    // only - watching a symbol must never make it tradeable.
+    const symbols = await listSymbolsFn({ watchedOnly: true });
 
     let symbolsSynced = 0;
     for (const symbol of symbols) {

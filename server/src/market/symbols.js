@@ -69,15 +69,26 @@ async function syncSymbols(bridge) {
   return { inserted, updated: symbols.length - inserted, total: symbols.length };
 }
 
-async function listSymbols({ enabledOnly = false } = {}) {
-  const sql = enabledOnly
-    ? 'SELECT * FROM symbols WHERE enabled = 1 ORDER BY broker_symbol'
-    : 'SELECT * FROM symbols ORDER BY broker_symbol';
-  return query(sql);
+async function listSymbols({ enabledOnly = false, watchedOnly = false } = {}) {
+  if (enabledOnly) return query('SELECT * FROM symbols WHERE enabled = 1 ORDER BY broker_symbol');
+  if (watchedOnly) return query('SELECT * FROM symbols WHERE watched = 1 OR enabled = 1 ORDER BY broker_symbol');
+  return query('SELECT * FROM symbols ORDER BY broker_symbol');
 }
 
 async function setSymbolEnabled(id, enabled) {
   await query('UPDATE symbols SET enabled = ? WHERE id = ?', [enabled ? 1 : 0, id]);
 }
 
-module.exports = { syncSymbols, listSymbols, setSymbolEnabled };
+/**
+ * Watching is display only and deliberately separate from enabling. A symbol
+ * can be examined on the scanner without ever becoming tradeable.
+ */
+async function setSymbolWatched(id, watched) {
+  await query('UPDATE symbols SET watched = ? WHERE id = ?', [watched ? 1 : 0, id]);
+}
+
+async function listWatchedSymbols() {
+  return query('SELECT * FROM symbols WHERE watched = 1 OR enabled = 1 ORDER BY broker_symbol');
+}
+
+module.exports = { syncSymbols, listSymbols, setSymbolEnabled, setSymbolWatched, listWatchedSymbols };
