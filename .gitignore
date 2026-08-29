@@ -6,3 +6,6 @@ server/.env
 npm-debug.log*
 bridge/venv/
 logs/
+
+# PM2 runtime state
+.pm2/

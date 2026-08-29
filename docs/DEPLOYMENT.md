@@ -98,3 +98,70 @@ risks about $2.23 at the 0.01 minimum lot, which is 2.2% of a $100 account and
 therefore refused under a 1% cap. Use **Risk → assess** to dry-run a
 representative signal at your intended balance and confirm it is tradeable at
 all before funding anything.
+
+## Running unattended for a two-week demo
+
+Nothing here is optional if the run is meant to survive a night, let alone a
+fortnight. Each item below corresponds to a way the run was measured to fail.
+
+### Process supervision
+
+    npx pm2 start ecosystem.config.cjs   # API + MT5 bridge, with auto-restart
+    npx pm2 save                         # snapshot for resurrect
+    npx pm2 status
+    npx pm2 logs trading-bridge --lines 50
+
+`ecosystem.config.cjs` deliberately excludes the Vite dev client. Vite is a
+development tool; serve `client/dist` instead.
+
+The bridge's `min_uptime` is 120s because it blocks for roughly 70 seconds
+connecting to MT5 before it serves. A shorter value reads a slow start as a
+crash loop.
+
+### Surviving a reboot
+
+PM2's `pm2 startup` is Linux-only. On Windows, a `trading-agent.cmd` in the
+user's Startup folder runs `pm2 resurrect` at logon:
+
+    %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\trading-agent.cmd
+
+MySQL needs nothing: Compose declares `restart: unless-stopped`, so Docker
+brings it back by itself.
+
+**The MT5 terminal does not restart itself.** It must be running and logged in
+before the bridge can attach, so after a reboot open MT5 first and confirm
+AutoTrading is on.
+
+### Sleep
+
+    powercfg /change standby-timeout-ac 0
+    powercfg /change hibernate-timeout-ac 0
+
+Measured on this machine: standby was set to 5 minutes, which would have ended
+the run within the first hour. Revert afterwards with a non-zero value.
+
+### The broker link drops, and used to stay dropped
+
+`mt5.initialize()` holds the Python GIL for the whole attempt, so the bridge
+cannot retry from inside a request handler without freezing every other route.
+Reconnection is therefore driven from the scheduler tick, which is already
+non-overlapping: each cycle checks bridge health, retries once when it is
+down, and skips the cycle rather than trading against a broker it cannot
+reach. Telegram is alerted once per outage and once on recovery - not once a
+minute for two weeks.
+
+### What to watch
+
+- `npx pm2 status` - `restarts` climbing means something is crash-looping.
+- The scheduler's `lastRun` (Risk view, or `GET /api/scheduler`) carries
+  `bridgeDown` and `diskFreeGb`.
+- Configure `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, or nothing will reach
+  you while you sleep.
+
+### Housekeeping over 14 days
+
+- Disk: an alert fires below `LOW_DISK_ALERT_GB` (default 5).
+- `SESSION_TTL_HOURS` defaults to 720, so the dashboard login outlasts the
+  demo. At the old 7-day default it expired mid-run.
+- Equity snapshots accumulate one row per tick per mode - roughly 20k rows a
+  fortnight, which is negligible.

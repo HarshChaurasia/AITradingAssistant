@@ -64,6 +64,11 @@ function createBridgeClient({ baseUrl, token, timeoutMs = 15000 }) {
     candles: ({ symbol, timeframe = 'H1', count = 500 }) =>
       request('/candles', { symbol, timeframe, count }),
 
+    // Reconnecting blocks the bridge for up to ~70s: mt5.initialize() holds
+    // the Python GIL for the whole attempt. Give it room rather than timing
+    // out and leaving the caller unsure whether it worked.
+    reconnect: () => request('/reconnect', undefined, 90000, { method: 'POST' }),
+
     positions: () => request('/positions', undefined, 20000),
     deals: ({ ticket }) => request('/deals', { ticket }, 20000),
 

@@ -4,6 +4,8 @@ const { generateSignals } = require('../signals/generator');
 const { expireStaleSignals } = require('../signals/store');
 const { executeApprovedSignals } = require('../execution/manager');
 const { reconcile } = require('../execution/reconciler');
+const { ensureBridgeConnected, checkDisk } = require('./health');
+const healthAlerts = require('../alerts/health');
 
 /**
  * Periodic candle sync followed by signal generation.
@@ -32,13 +34,34 @@ function createScheduler({
   // until this is explicitly enabled.
   executionEnabled = process.env.EXECUTION_ENABLED === 'true',
   balance = Number(process.env.ACCOUNT_BALANCE_HINT || 10000),
+  ensureBridgeConnectedFn = ensureBridgeConnected,
+  checkDiskFn = checkDisk,
+  alerts = healthAlerts,
   logger = console
 } = {}) {
   let timer = null;
   let ticking = false;
   let lastResult = null;
+  // Survives across ticks so an outage alerts once, not every minute.
+  const health = { bridgeDown: false, lowDisk: false };
 
   async function runOnce() {
+    // Before anything else: is the broker link alive? A dropped MT5
+    // connection never recovers on its own - the bridge cannot retry from
+    // inside a request without freezing itself - so the retry happens here.
+    const link = await ensureBridgeConnectedFn({ bridge, state: health, alerts, logger });
+    const disk = await checkDiskFn({ state: health, alerts, logger });
+
+    if (!link.connected) {
+      lastResult = {
+        at: new Date().toISOString(),
+        bridgeDown: true,
+        diskFreeGb: disk.freeGb,
+        note: 'broker link is down; skipping this cycle'
+      };
+      return lastResult;
+    }
+
     const symbols = await listSymbolsFn({ enabledOnly: true });
 
     let symbolsSynced = 0;
@@ -66,6 +89,8 @@ function createScheduler({
 
     lastResult = {
       at: new Date().toISOString(),
+      bridgeDown: false,
+      diskFreeGb: disk.freeGb,
       symbolsSynced, signals, execution, reconciliation, expired
     };
     return lastResult;

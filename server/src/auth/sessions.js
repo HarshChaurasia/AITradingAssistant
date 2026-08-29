@@ -9,7 +9,9 @@ const { query } = require('../db/pool');
  * signature scheme of its own.
  */
 
-const DEFAULT_TTL_HOURS = 24 * 7;
+// A two-week demo outlasts a seven-day session, and being logged out mid-run
+// is a poor way to discover that. Configurable, defaulting to 30 days.
+const DEFAULT_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS || 24 * 30);
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex');

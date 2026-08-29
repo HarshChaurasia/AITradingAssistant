@@ -16,7 +16,9 @@ test('runOnce reports what each phase did', async () => {
     generateSignalsFn: async () => { calls.push('generate'); return { evaluated: 1, created: 1, skipped: 0 }; },
     expireStaleSignalsFn: async () => { calls.push('expire'); return 2; },
     executeFn: async () => { calls.push('execute'); return { attempted: 0, filled: 0, skipped: 0, failed: 0 }; },
-    reconcileFn: async () => { calls.push('reconcile'); return { openAtBroker: 0, closed: 0, updated: 0, orphans: [] }; }
+    reconcileFn: async () => { calls.push('reconcile'); return { openAtBroker: 0, closed: 0, updated: 0, orphans: [] }; },
+    ensureBridgeConnectedFn: async () => ({ connected: true, reconnected: false }),
+    checkDiskFn: async () => ({ freeGb: 100 })
   });
 
   const result = await scheduler.runOnce();
@@ -47,7 +49,9 @@ test('ticks never overlap', async () => {
     generateSignalsFn: async () => ({ evaluated: 0, created: 0, skipped: 0 }),
     expireStaleSignalsFn: async () => 0,
     executeFn: async () => ({ attempted: 0, filled: 0, skipped: 0, failed: 0 }),
-    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] })
+    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] }),
+    ensureBridgeConnectedFn: async () => ({ connected: true, reconnected: false }),
+    checkDiskFn: async () => ({ freeGb: 100 })
   });
 
   scheduler.start();
@@ -68,6 +72,8 @@ test('a failing tick is contained and the scheduler keeps running', async () => 
     expireStaleSignalsFn: async () => 0,
     executeFn: async () => ({ attempted: 0, filled: 0, skipped: 0, failed: 0 }),
     reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] }),
+    ensureBridgeConnectedFn: async () => ({ connected: true, reconnected: false }),
+    checkDiskFn: async () => ({ freeGb: 100 }),
     // The failures here are deliberate; keep them out of the test output.
     logger: { error: () => {} }
   });
@@ -89,7 +95,9 @@ test('stop halts the schedule and isRunning reflects it', async () => {
     generateSignalsFn: async () => ({ evaluated: 0, created: 0, skipped: 0 }),
     expireStaleSignalsFn: async () => 0,
     executeFn: async () => ({ attempted: 0, filled: 0, skipped: 0, failed: 0 }),
-    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] })
+    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] }),
+    ensureBridgeConnectedFn: async () => ({ connected: true, reconnected: false }),
+    checkDiskFn: async () => ({ freeGb: 100 })
   });
 
   assert.equal(scheduler.isRunning(), false);
@@ -114,7 +122,9 @@ test('start is idempotent', async () => {
     generateSignalsFn: async () => ({ evaluated: 0, created: 0, skipped: 0 }),
     expireStaleSignalsFn: async () => 0,
     executeFn: async () => ({ attempted: 0, filled: 0, skipped: 0, failed: 0 }),
-    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] })
+    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] }),
+    ensureBridgeConnectedFn: async () => ({ connected: true, reconnected: false }),
+    checkDiskFn: async () => ({ freeGb: 100 })
   });
 
   scheduler.start();
@@ -133,7 +143,9 @@ test('execution runs only when explicitly enabled', async () => {
     generateSignalsFn: async () => ({ evaluated: 0, created: 0, skipped: 0 }),
     expireStaleSignalsFn: async () => 0,
     executeFn: async () => { calls.push('execute'); return { attempted: 1, filled: 1, skipped: 0, failed: 0 }; },
-    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] })
+    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] }),
+    ensureBridgeConnectedFn: async () => ({ connected: true, reconnected: false }),
+    checkDiskFn: async () => ({ freeGb: 100 })
   };
 
   const off = createScheduler({ ...base, executionEnabled: false });
@@ -145,4 +157,42 @@ test('execution runs only when explicitly enabled', async () => {
   const onResult = await on.runOnce();
   assert.deepEqual(calls, ['execute']);
   assert.equal(onResult.execution.filled, 1);
+});
+
+test('a down broker link skips the cycle rather than trading blind', async () => {
+  const touched = [];
+  const scheduler = createScheduler({
+    bridge: fakeBridge(),
+    ensureBridgeConnectedFn: async () => ({ connected: false, reconnected: false }),
+    checkDiskFn: async () => ({ freeGb: 100 }),
+    syncCandlesFn: async () => { touched.push('sync'); return { received: 0, stored: 0 }; },
+    listSymbolsFn: async () => { touched.push('symbols'); return []; },
+    generateSignalsFn: async () => { touched.push('generate'); return { evaluated: 0, created: 0, skipped: 0 }; },
+    expireStaleSignalsFn: async () => 0,
+    executeFn: async () => { touched.push('execute'); return { attempted: 0, filled: 0, skipped: 0, failed: 0 }; },
+    reconcileFn: async () => { touched.push('reconcile'); return { openAtBroker: 0, closed: 0, updated: 0, orphans: [] }; }
+  });
+
+  const result = await scheduler.runOnce();
+
+  assert.equal(result.bridgeDown, true);
+  assert.deepEqual(touched, [], 'nothing runs against a broker we cannot reach');
+});
+
+test('the tick reports free disk so an unattended run can be watched', async () => {
+  const scheduler = createScheduler({
+    bridge: fakeBridge(),
+    ensureBridgeConnectedFn: async () => ({ connected: true, reconnected: false }),
+    checkDiskFn: async () => ({ freeGb: 42.5 }),
+    syncCandlesFn: async () => ({ received: 0, stored: 0 }),
+    listSymbolsFn: async () => [],
+    generateSignalsFn: async () => ({ evaluated: 0, created: 0, skipped: 0 }),
+    expireStaleSignalsFn: async () => 0,
+    executeFn: async () => ({ attempted: 0, filled: 0, skipped: 0, failed: 0 }),
+    reconcileFn: async () => ({ openAtBroker: 0, closed: 0, updated: 0, orphans: [] })
+  });
+
+  const result = await scheduler.runOnce();
+  assert.equal(result.diskFreeGb, 42.5);
+  assert.equal(result.bridgeDown, false);
 });
