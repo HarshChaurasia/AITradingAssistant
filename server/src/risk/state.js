@@ -1,5 +1,6 @@
 const { query } = require('../db/pool');
 const { loadRiskSettings } = require('./settings');
+const { alertKillSwitch } = require('../alerts/events');
 
 function currentTradingDay(now = new Date()) {
   return now.toISOString().slice(0, 10);
@@ -47,6 +48,13 @@ async function recordTradeResult({ mode, pnl, day = currentTradingDay() }) {
     ]
   );
 
+  // Fire and forget: the caller is in the trading path and must not wait on,
+  // or be broken by, a notification.
+  if (shouldTrip && state.kill_switch !== 1) {
+    const reason = `${consecutive} consecutive losses reached the limit of ${settings.consecutiveLossLimit}`;
+    alertKillSwitch({ mode, reason }).catch(() => {});
+  }
+
   return getState(mode, day);
 }
 
@@ -58,6 +66,7 @@ async function tripKillSwitch({ mode, reason, day = currentTradingDay() }) {
       WHERE trading_day = ? AND mode = ?`,
     [reason, day, mode]
   );
+  alertKillSwitch({ mode, reason }).catch(() => {});
   return getState(mode, day);
 }
 

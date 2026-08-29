@@ -1,5 +1,10 @@
+export class AuthError extends Error {}
+
 async function request(path, options) {
-  const response = await fetch(path, options);
+  // Cookies must be sent explicitly: the dev server proxies to another port,
+  // and without this every call after login is silently anonymous.
+  const response = await fetch(path, { credentials: 'include', ...options });
+
   if (!response.ok) {
     let message = response.statusText;
     try {
@@ -7,12 +12,21 @@ async function request(path, options) {
     } catch {
       // Response had no JSON body; the status text is the best we have.
     }
+    if (response.status === 401) throw new AuthError(message);
     throw new Error(message);
   }
   return response.json();
 }
 
 export const api = {
+  authStatus: () => request('/api/auth/status'),
+  login: (username, password) =>
+    request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    }),
+  logout: () => request('/api/auth/logout', { method: 'POST' }),
   bridgeHealth: () => request('/api/bridge/health'),
   bridgeAccount: () => request('/api/bridge/account'),
   symbols: (enabledOnly = false) => request(`/api/symbols${enabledOnly ? '?enabledOnly=1' : ''}`),
@@ -66,6 +80,8 @@ export const api = {
       body: JSON.stringify({ mode })
     }),
   closeTrade: (tradeId) => request(`/api/execution/close/${tradeId}`, { method: 'POST' }),
+  commentary: (symbolId, timeframe = 'H1') =>
+    request(`/api/commentary?symbolId=${symbolId}&timeframe=${timeframe}`),
   strategies: () => request('/api/strategies'),
   backtests: () => request('/api/backtests'),
   backtest: (id) => request(`/api/backtests/${id}`),

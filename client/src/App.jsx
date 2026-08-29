@@ -4,6 +4,8 @@ import Backtests from './pages/Backtests';
 import Signals from './pages/Signals';
 import Risk from './pages/Risk';
 import Trades from './pages/Trades';
+import Login from './pages/Login';
+import { api } from './api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const chartData = [
@@ -18,6 +20,13 @@ const chartData = [
 
 function App() {
   const [view, setView] = useState('overview');
+  const [auth, setAuth] = useState({ checked: false, username: null });
+
+  useEffect(() => {
+    api.authStatus()
+      .then((s) => setAuth({ checked: true, username: s.authenticated ? s.username : null }))
+      .catch(() => setAuth({ checked: true, username: null }));
+  }, []);
   const [overview, setOverview] = useState(null);
   const [news, setNews] = useState([]);
 
@@ -34,6 +43,9 @@ function App() {
 
     load();
   }, []);
+
+  if (!auth.checked) return <div className="login-shell"><p className="muted">Loading…</p></div>;
+  if (!auth.username) return <Login onSignedIn={(username) => setAuth({ checked: true, username })} />;
 
   return (
     <div className="app-shell">
@@ -52,7 +64,15 @@ function App() {
       <main className="content">
         <header className="topbar">
           <h1>Trading Dashboard</h1>
-          <div className="status-pill">System online</div>
+          <div className="topbar-right">
+            <span className="status-pill">System online</span>
+            <button
+              className="link"
+              onClick={() => api.logout().then(() => setAuth({ checked: true, username: null }))}
+            >
+              sign out ({auth.username})
+            </button>
+          </div>
         </header>
 
         {view === 'markets' ? <Markets />

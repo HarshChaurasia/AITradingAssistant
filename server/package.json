@@ -7,9 +7,11 @@
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
-    "migrate": "node src/db/migrate.js"
+    "migrate": "node src/db/migrate.js",
+    "create-user": "node src/cli/create-user.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

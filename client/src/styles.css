@@ -401,3 +401,40 @@ button {
 .gate.pass .gate-name { color: #86efac; }
 .gate.fail .gate-name { color: #fca5a5; }
 .gate-detail { color: #9aa7bc; }
+
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b1220;
+}
+
+.login-card {
+  background: #121a26;
+  border: 1px solid #2d3748;
+  border-radius: 14px;
+  padding: 28px 26px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-card h2 { margin: 0; color: #e6edf7; }
+.login-card .field input { width: 100%; box-sizing: border-box; }
+
+.login-card button {
+  background: #1d4ed8;
+  color: #e6edf7;
+  border: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.login-card button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.topbar-right { display: flex; align-items: center; gap: 12px; }

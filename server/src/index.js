@@ -11,8 +11,35 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+app.get('/api/health', async (req, res) => {
+  let database = { connected: false, message: 'unknown' };
+  try {
+    const rows = await query('SELECT 1 AS ok');
+    database = { connected: rows[0].ok === 1, message: 'MySQL OK' };
+  } catch (error) {
+    database = { connected: false, message: error.message };
+  }
+  res.json({ ok: true, service: 'trading-agent-server', timestamp: new Date().toISOString(), database });
+});
+
+
 const { bridgeFromEnv } = require('./bridge/client');
 const { createMarketRouter } = require('./routes/market');
+
+const { createAuthRouter } = require('./routes/auth');
+const { requireSession } = require('./auth/middleware');
+
+// Auth routes first: login and status must be reachable without a session.
+app.use('/api', createAuthRouter());
+
+// Everything mounted after this line requires a session. The guard sits here
+// rather than on each route so a route added later is protected by default -
+// a dashboard that can place orders must never be open by accident.
+if (process.env.AUTH_ENABLED === 'false') {
+  console.warn('WARNING: AUTH_ENABLED=false - the API is UNPROTECTED and it can place trades');
+} else {
+  app.use('/api', requireSession);
+}
 
 app.use('/api', createMarketRouter({ bridge: bridgeFromEnv() }));
 
@@ -32,6 +59,10 @@ app.use('/api', createRiskRouter({ scheduler }));
 const { createExecutionRouter } = require('./routes/execution');
 
 app.use('/api', createExecutionRouter({ bridge: bridgeFromEnv() }));
+
+const { createAiRouter } = require('./routes/ai');
+
+app.use('/api', createAiRouter());
 
 // Opt-in: an unattended loop should never start just because the server did.
 if (process.env.SCHEDULER_ENABLED === 'true') {
@@ -56,16 +87,6 @@ const sampleNews = [
   { id: 3, title: 'Crypto markets see renewed momentum after ETF inflows', source: 'CoinDesk', time: '41 min ago', impact: 'Medium' }
 ];
 
-app.get('/api/health', async (req, res) => {
-  let database = { connected: false, message: 'unknown' };
-  try {
-    const rows = await query('SELECT 1 AS ok');
-    database = { connected: rows[0].ok === 1, message: 'MySQL OK' };
-  } catch (error) {
-    database = { connected: false, message: error.message };
-  }
-  res.json({ ok: true, service: 'trading-agent-server', timestamp: new Date().toISOString(), database });
-});
 
 app.get('/api/overview', (req, res) => {
   res.json(sampleOverview);

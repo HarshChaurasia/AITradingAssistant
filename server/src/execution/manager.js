@@ -1,6 +1,7 @@
 const { query } = require('../db/pool');
 const { assessSignal } = require('../risk/engine');
 const { countOpenPositions } = require('../signals/generator');
+const { alertOrderFilled, alertOrderFailed } = require('../alerts/events');
 
 /**
  * Turns approved signals into broker orders.
@@ -103,6 +104,11 @@ async function executeSignal({ bridge, signal, mode, balance }) {
         WHERE id = ?`,
       [result.retcode ?? null, String(result.comment || 'rejected').slice(0, 255), tradeId]
     );
+    alertOrderFailed({
+      symbol: symbol.broker_symbol,
+      reason: result.comment || 'rejected',
+      mode
+    }).catch(() => {});
     return { status: 'failed', tradeId, reason: result.comment || 'the broker rejected the order' };
   }
 
@@ -130,6 +136,11 @@ async function executeSignal({ bridge, signal, mode, balance }) {
      VALUES (UTC_TIMESTAMP(), 'system', 'order_filled', CAST(? AS JSON))`,
     [JSON.stringify({ tradeId, signalId: signal.id, ticket: result.ticket, lot: decision.lot, mode })]
   );
+
+  alertOrderFilled({
+    symbol: symbol.broker_symbol, side: signal.side, lot: decision.lot,
+    ticket: result.ticket, mode
+  }).catch(() => {});
 
   return { status: 'filled', tradeId, ticket: result.ticket };
 }
