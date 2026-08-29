@@ -1,0 +1,44 @@
+# Development infrastructure only.
+# Production (Hostinger) supplies its own MySQL; the app never depends on Docker.
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: trading-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-tradingroot}
+      MYSQL_DATABASE: ${DB_NAME:-trading_agent}
+      MYSQL_USER: ${DB_USER:-trader}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-traderpass}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Runs only when the data volume is empty, i.e. on a fresh install.
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${DB_ROOT_PASSWORD:-tradingroot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  adminer:
+    image: adminer:5
+    container_name: trading-adminer
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: mysql
+    ports:
+      - "8080:8080"
+
+volumes:
+  mysql_data:
