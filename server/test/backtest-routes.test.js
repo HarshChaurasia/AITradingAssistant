@@ -52,9 +52,12 @@ test('GET /api/strategies lists the shipped strategies', async (t) => {
   const { base } = await startApp(t);
   const rows = await (await fetch(`${base}/api/strategies`)).json();
 
+  // Asserted against the registry rather than a hardcoded list, so adding a
+  // strategy does not break an unrelated route test.
+  const { strategies } = require('../src/strategies/registry');
   const names = rows.map((r) => r.name).sort();
-  assert.deepEqual(names, ['mean-reversion', 'trend-breakout']);
-  assert.equal(rows[0].status, 'draft');
+  assert.deepEqual(names, strategies.map((s) => s.name).sort());
+  assert.ok(rows.every((r) => ['draft', 'backtested', 'demo', 'live'].includes(r.status)));
 });
 
 test('POST /api/backtests runs and stores a backtest', async (t) => {

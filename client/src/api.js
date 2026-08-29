@@ -89,6 +89,12 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ watched })
     }),
+  tradeSetup: (symbolId, strategy, timeframe) =>
+    request('/api/scanner/trade', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ symbolId, strategy, timeframe })
+    }),
   strategies: () => request('/api/strategies'),
   backtests: () => request('/api/backtests'),
   backtest: (id) => request(`/api/backtests/${id}`),

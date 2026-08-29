@@ -38,9 +38,13 @@ export default function Scanner() {
   const [expanded, setExpanded] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [tradedTimeframe, setTradedTimeframe] = useState(null);
 
   const load = useCallback(async () => {
-    setScan(await api.scanner(timeframe));
+    const result = await api.scanner(timeframe);
+    setScan(result);
+    setTradedTimeframe(result.tradedTimeframe);
     setSymbols(await api.symbols());
   }, [timeframe]);
 
@@ -96,6 +100,13 @@ export default function Scanner() {
       </div>
 
       {error && <p className="error">{error}</p>}
+      {notice && <p className="scan-verdict go">{notice}</p>}
+      {tradedTimeframe && (
+        <p className="muted">
+          The scheduler trades <strong>{tradedTimeframe}</strong> only. Other timeframes here are
+          observation; a setup on one can still be taken manually.
+        </p>
+      )}
 
       <p className="muted">
         Watching a symbol shows it here. It does <strong>not</strong> make it tradeable — only a
@@ -143,11 +154,35 @@ export default function Scanner() {
               <p className="scan-reason">{s.reason}</p>
 
               {s.firing && s.risk && (
-                <p className={s.wouldTrade ? 'scan-verdict go' : 'scan-verdict blocked'}>
-                  {s.wouldTrade
-                    ? `would trade ${s.risk.lot} lots risking ${num(s.risk.riskAmount)}`
-                    : `blocked: ${s.blockedBy}`}
-                </p>
+                <>
+                  <p className={s.wouldTrade ? 'scan-verdict go' : 'scan-verdict blocked'}>
+                    {s.wouldTrade
+                      ? `risk allows ${s.risk.lot} lots risking ${num(s.risk.riskAmount)}`
+                      : `blocked: ${s.blockedBy}`}
+                  </p>
+
+                  {/* The scheduler only ever evaluates one timeframe. Saying
+                      "would trade" on any other would be a false promise. */}
+                  {s.wouldTrade && tradedTimeframe && timeframe !== tradedTimeframe && (
+                    <p className="scan-verdict blocked">
+                      the scheduler only trades {tradedTimeframe}, so this {timeframe} setup
+                      will not be taken automatically — use Trade now
+                    </p>
+                  )}
+
+                  {s.wouldTrade && (
+                    <button
+                      className="trade-now"
+                      disabled={busy}
+                      onClick={() => act(async () => {
+                        const r = await api.tradeSetup(row.symbolId, s.strategy, timeframe);
+                        setNotice(`filled ${s.side} ${row.symbol} — ticket ${r.ticket}`);
+                      })}
+                    >
+                      Trade now — {s.side} {s.risk.lot} lots
+                    </button>
+                  )}
+                </>
               )}
 
               <button

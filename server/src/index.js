@@ -66,7 +66,7 @@ app.use('/api', createAiRouter());
 
 const { createScannerRouter } = require('./routes/scanner');
 
-app.use('/api', createScannerRouter());
+app.use('/api', createScannerRouter({ bridge: bridgeFromEnv() }));
 
 // Opt-in: an unattended loop should never start just because the server did.
 if (process.env.SCHEDULER_ENABLED === 'true') {

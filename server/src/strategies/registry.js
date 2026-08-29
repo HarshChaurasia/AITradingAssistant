@@ -2,8 +2,21 @@ const { query } = require('../db/pool');
 
 const trendBreakout = require('./trend-breakout');
 const meanReversion = require('./mean-reversion');
+const macdTrend = require('./macd-trend');
+const bollingerSqueeze = require('./bollinger-squeeze');
+const superTrendFlip = require('./supertrend');
+const maCrossover = require('./ma-crossover');
 
-const strategies = [trendBreakout, meanReversion];
+const strategies = [
+  trendBreakout,
+  meanReversion,
+  macdTrend,
+  bollingerSqueeze,
+  superTrendFlip,
+  // A deliberate baseline. If a more elaborate strategy cannot beat the oldest
+  // trend rule there is, the elaboration is not earning its complexity.
+  maCrossover
+];
 
 function getStrategy(name) {
   const found = strategies.find((s) => s.name === name);

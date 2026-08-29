@@ -481,3 +481,16 @@ button {
 
 .scan-detail { margin-top: 8px; }
 .gate-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #9aa7bc; margin-top: 8px; }
+
+.trade-now {
+  background: #1d4ed8;
+  color: #e6edf7;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.trade-now:disabled { opacity: 0.5; cursor: not-allowed; }

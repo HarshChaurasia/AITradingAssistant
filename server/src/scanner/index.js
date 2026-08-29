@@ -130,7 +130,16 @@ async function scanWatchlist({
     });
   }
 
-  return { at: new Date().toISOString(), mode, timeframe, balance, rows };
+  return {
+    at: new Date().toISOString(),
+    mode,
+    timeframe,
+    // The scheduler evaluates exactly one timeframe. Reporting it lets the UI
+    // avoid claiming a setup on any other will be taken automatically.
+    tradedTimeframe: process.env.STRATEGY_TIMEFRAME || 'H1',
+    balance,
+    rows
+  };
 }
 
 module.exports = { scanWatchlist };

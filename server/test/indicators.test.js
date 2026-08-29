@@ -86,3 +86,77 @@ test('no indicator reads future bars', () => {
     assert.equal(truncated[i], full[i], `ema value at ${i} changed when later bars were removed`);
   }
 });
+
+test('stddev is zero for a flat series and positive for a varying one', () => {
+  const { stddev } = require('../src/indicators');
+  assert.equal(stddev([5, 5, 5, 5, 5], 3)[4], 0);
+  assert.ok(stddev([1, 2, 3, 4, 5], 3)[4] > 0);
+});
+
+test('bollinger bands straddle the mean by the multiplier', () => {
+  const { bollinger, sma, stddev } = require('../src/indicators');
+  const values = [10, 12, 11, 13, 12, 14, 13, 15, 14, 16];
+  const b = bollinger(values, 5, 2);
+  const i = values.length - 1;
+
+  assert.equal(b.middle[i], sma(values, 5)[i]);
+  assert.equal(Number(b.upper[i].toFixed(8)), Number((b.middle[i] + 2 * stddev(values, 5)[i]).toFixed(8)));
+  assert.equal(Number(b.lower[i].toFixed(8)), Number((b.middle[i] - 2 * stddev(values, 5)[i]).toFixed(8)));
+  assert.ok(b.bandwidth[i] > 0);
+});
+
+test('bollinger bandwidth narrows when the series goes quiet', () => {
+  const { bollinger } = require('../src/indicators');
+  const noisy = Array.from({ length: 40 }, (_, i) => 100 + (i % 2 ? 6 : -6));
+  const quiet = [...noisy, ...Array.from({ length: 40 }, () => 100)];
+  const b = bollinger(quiet, 20, 2);
+
+  assert.ok(b.bandwidth.at(-1) < b.bandwidth[39], 'a squeeze must register as a narrower band');
+});
+
+test('macd line is the difference of two emas, and the signal smooths it', () => {
+  const { macd, ema } = require('../src/indicators');
+  const values = Array.from({ length: 120 }, (_, i) => 100 + Math.sin(i / 5) * 4 + i * 0.1);
+  const m = macd(values, 12, 26, 9);
+
+  const fast = ema(values, 12);
+  const slow = ema(values, 26);
+  const i = values.length - 1;
+
+  assert.equal(Number(m.line[i].toFixed(10)), Number((fast[i] - slow[i]).toFixed(10)));
+  assert.equal(Number(m.histogram[i].toFixed(10)), Number((m.line[i] - m.signal[i]).toFixed(10)));
+  assert.equal(m.line.length, values.length, 'padding keeps indexes aligned with the candles');
+  assert.equal(m.signal[24], null, 'the signal cannot exist before the macd line does');
+});
+
+test('macd reads no future bars', () => {
+  const { macd } = require('../src/indicators');
+  const values = Array.from({ length: 140 }, (_, i) => 100 + Math.sin(i / 7) * 3);
+  const full = macd(values, 12, 26, 9);
+  const truncated = macd(values.slice(0, 100), 12, 26, 9);
+
+  for (let i = 0; i < 100; i += 1) {
+    assert.equal(truncated.line[i], full.line[i], `macd line changed at ${i}`);
+    assert.equal(truncated.signal[i], full.signal[i], `macd signal changed at ${i}`);
+  }
+});
+
+test('supertrend flips direction with the market and trails behind price', () => {
+  const { superTrend } = require('../src/indicators');
+  const candles = [];
+  for (let i = 0; i < 60; i += 1) {
+    const base = 100 + i;      // strong uptrend
+    candles.push({ high: base + 1, low: base - 1, close: base, open: base });
+  }
+  for (let i = 0; i < 60; i += 1) {
+    const base = 160 - i * 1.5; // sharp reversal down
+    candles.push({ high: base + 1, low: base - 1, close: base, open: base });
+  }
+
+  const st = superTrend(candles, 10, 3);
+
+  assert.equal(st.trend[55], 1, 'up during the rally');
+  assert.equal(st.trend.at(-1), -1, 'down after the reversal');
+  assert.ok(st.band[55] < candles[55].close, 'in an uptrend the stop trails below price');
+  assert.ok(st.band.at(-1) > candles.at(-1).close, 'in a downtrend it sits above');
+});

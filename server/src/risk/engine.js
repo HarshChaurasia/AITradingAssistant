@@ -88,6 +88,16 @@ async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, 
   add('position_size', !sized.rejected,
     sized.rejected ? sized.reason : `${sized.lot} lots risking ${sized.riskAmount.toFixed(2)}`);
 
+  // 8. Notional exposure. Risk percentage alone does not bound position size:
+  // the tighter the stop, the larger the position for the same 1% risk. This
+  // caps what that can grow into.
+  const notional = sized.rejected ? 0 : sized.lot * Number(symbol.contract_size) * Number(signal.entry);
+  const notionalCap = balance * settings.maxNotionalMultiple;
+  const overExposed = notional > notionalCap;
+  add('notional_exposure', !overExposed,
+    `${notional.toFixed(0)} notional against a cap of ${notionalCap.toFixed(0)} ` +
+    `(${settings.maxNotionalMultiple}x equity)`);
+
   const denialReasons = checks.filter((c) => !c.passed).map((c) => c.detail);
 
   return {

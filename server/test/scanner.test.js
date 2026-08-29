@@ -175,8 +175,9 @@ test('the scanner reports disabled strategies too, so a quiet screen is explicab
   const { scanWatchlist } = require('../src/scanner');
   const scan = await scanWatchlist({ mode: 'demo', timeframe: 'H1', balance: 100000 });
 
+  const { strategies } = require('../src/strategies/registry');
   const entries = scan.rows[0].strategies;
-  assert.equal(entries.length, 2, 'both shipped strategies are shown');
+  assert.equal(entries.length, strategies.length, 'every shipped strategy is shown');
   assert.ok(entries.every((e) => e.strategyEnabled === false),
     'their enabled state is visible, so an empty Signals page is explicable');
 });

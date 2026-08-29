@@ -1,8 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const trendBreakout = require('../src/strategies/trend-breakout');
-const meanReversion = require('../src/strategies/mean-reversion');
+const { strategies } = require('../src/strategies/registry');
 
 /**
  * explain() exists so the scanner can say WHY a signal did or did not fire.
@@ -14,7 +13,7 @@ const meanReversion = require('../src/strategies/mean-reversion');
 
 // A series with trends both ways, pullbacks, and genuine breakouts, so both
 // strategies actually fire somewhere across it.
-function varietySeries(length = 600) {
+function varietySeries(length = 900) {
   const candles = [];
   for (let i = 0; i < length; i += 1) {
     const drift = i < length / 2 ? i * 0.05 : (length - i) * 0.05;
@@ -30,7 +29,9 @@ function varietySeries(length = 600) {
   return candles;
 }
 
-for (const strategy of [trendBreakout, meanReversion]) {
+// Every registered strategy, so a newly added one cannot skip the agreement
+// check by simply not being listed here.
+for (const strategy of strategies) {
   test(`${strategy.name}: explain agrees with evaluate on every bar`, () => {
     const candles = varietySeries();
     const params = strategy.defaultParams;

@@ -228,3 +228,81 @@ test('every gate is evaluated even when several fail at once', async (t) => {
     assert.ok(names.includes(gate), `missing gate: ${gate}`);
   }
 });
+
+test('the real ETHUSD case passes: 1% risk on a wide-enough stop is not over-exposed', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  // Taken from live data. This LOOKS alarming - 147 lots - and is in fact
+  // fine: 363k notional is 2.7x equity, needs 725 of margin at 1:500, and the
+  // 9.06 stop is 7.2x the 1.25 spread. Pinned so a future tightening of the
+  // cap cannot quietly start rejecting sound trades.
+  const crypto = {
+    id: 2, broker_symbol: 'ETHUSD', contract_size: 1,
+    min_lot: 0.1, lot_step: 0.1, max_lot: 1000,
+    currency_profit: 'USD', currency_margin: 'USD'
+  };
+  const signal = { side: 'BUY', entry: 2457, sl: 2447.94, tp: 2470, symbol_id: 2 };
+
+  const d = await assessSignal({
+    signal, symbol: crypto, mode: 'demo', balance: 133765, openPositions: 0
+  });
+
+  const gate = d.checks.find((c) => c.name === 'notional_exposure');
+  assert.ok(gate, 'the exposure gate must be reported');
+  assert.equal(gate.passed, true, `2.7x equity is within the 5x cap: ${gate.detail}`);
+  assert.equal(d.allowed, true, d.denialReasons.join('; '));
+  assert.equal(d.lot, 147.6);
+});
+
+test('a stop so tight it implies an over-leveraged position IS refused', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  const crypto = {
+    id: 2, broker_symbol: 'ETHUSD', contract_size: 1,
+    min_lot: 0.1, lot_step: 0.1, max_lot: 100000,
+    currency_profit: 'USD', currency_margin: 'USD'
+  };
+  // A one-dollar stop on a 2457 instrument. The risk is still 1%, but it
+  // demands 1337 lots - about 3.3m of notional on 133k of equity, 24x.
+  // Risk percentage alone cannot catch this; the exposure gate can.
+  const razorThin = { side: 'BUY', entry: 2457, sl: 2456, tp: 2470, symbol_id: 2 };
+
+  const d = await assessSignal({
+    signal: razorThin, symbol: crypto, mode: 'demo', balance: 133765, openPositions: 0
+  });
+
+  const gate = d.checks.find((c) => c.name === 'notional_exposure');
+  assert.equal(gate.passed, false, `a 24x position must be refused: ${gate.detail}`);
+  assert.equal(d.allowed, false);
+  assert.equal(d.lot, 0);
+});
+
+test('a normally sized position passes the exposure gate', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  const d = await assessSignal({
+    signal: GOOD_SIGNAL, symbol: SYMBOL, mode: 'demo', balance: 10000, openPositions: 0
+  });
+
+  const gate = d.checks.find((c) => c.name === 'notional_exposure');
+  assert.equal(gate.passed, true, `0.1 lots of EURUSD is 11k notional on 10k equity: ${gate.detail}`);
+  assert.equal(d.allowed, true, d.denialReasons.join('; '));
+});
+
+test('the exposure cap is configurable', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { saveRiskSettings } = require('../src/risk/settings');
+
+  await saveRiskSettings({ maxNotionalMultiple: 0.5 });
+
+  const d = await assessSignal({
+    signal: GOOD_SIGNAL, symbol: SYMBOL, mode: 'demo', balance: 10000, openPositions: 0
+  });
+
+  assert.equal(d.checks.find((c) => c.name === 'notional_exposure').passed, false,
+    'a 0.5x cap must reject what a 5x cap allowed');
+});
