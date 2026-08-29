@@ -20,6 +20,21 @@ const { createBacktestRouter } = require('./routes/backtests');
 
 app.use('/api', createBacktestRouter());
 
+const { createSignalRouter } = require('./routes/signals');
+const { createRiskRouter } = require('./routes/risk');
+const { createScheduler } = require('./scheduler');
+
+const scheduler = createScheduler({ bridge: bridgeFromEnv() });
+
+app.use('/api', createSignalRouter());
+app.use('/api', createRiskRouter({ scheduler }));
+
+// Opt-in: an unattended loop should never start just because the server did.
+if (process.env.SCHEDULER_ENABLED === 'true') {
+  scheduler.start();
+  console.log(`scheduler started (mode ${process.env.TRADING_MODE || 'demo'})`);
+}
+
 const sampleOverview = {
   accountValue: 100,
   dailyPnL: 3.4,
@@ -30,48 +45,6 @@ const sampleOverview = {
   confidence: 78,
   activeStrategies: 3
 };
-
-const sampleSignals = [
-  {
-    id: 1,
-    symbol: 'EUR/USD',
-    strategy: 'Trend Breakout',
-    side: 'BUY',
-    confidence: 81,
-    risk: 0.8,
-    price: 1.0842,
-    stop: 1.0814,
-    takeProfit: 1.0896,
-    status: 'Ready',
-    reason: 'Bullish structure + breakout confirmation + no major news conflict'
-  },
-  {
-    id: 2,
-    symbol: 'XAU/USD',
-    strategy: 'Momentum Fade',
-    side: 'SELL',
-    confidence: 74,
-    risk: 0.7,
-    price: 2348.4,
-    stop: 2356.8,
-    takeProfit: 2337.9,
-    status: 'Watch',
-    reason: 'Gold retraced into resistance while momentum cooled'
-  },
-  {
-    id: 3,
-    symbol: 'BTC/USD',
-    strategy: 'Volatility Trend',
-    side: 'BUY',
-    confidence: 68,
-    risk: 1.1,
-    price: 61120,
-    stop: 60300,
-    takeProfit: 64350,
-    status: 'Filtered',
-    reason: 'Trend still positive, but risk is elevated and volatility is high'
-  }
-];
 
 const sampleNews = [
   { id: 1, title: 'Dollar softens as growth concerns rise', source: 'Reuters', time: '12 min ago', impact: 'Medium' },
@@ -98,10 +71,6 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/overview', (req, res) => {
   res.json(sampleOverview);
-});
-
-app.get('/api/signals', (req, res) => {
-  res.json(sampleSignals);
 });
 
 app.get('/api/news', (req, res) => {

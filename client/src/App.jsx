@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import Markets from './pages/Markets';
 import Backtests from './pages/Backtests';
+import Signals from './pages/Signals';
+import Risk from './pages/Risk';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const chartData = [
@@ -16,21 +18,18 @@ const chartData = [
 function App() {
   const [view, setView] = useState('overview');
   const [overview, setOverview] = useState(null);
-  const [signals, setSignals] = useState([]);
   const [news, setNews] = useState([]);
   const [trades, setTrades] = useState([]);
 
   useEffect(() => {
     const load = async () => {
-      const [overviewRes, signalsRes, newsRes, tradesRes] = await Promise.all([
+      const [overviewRes, newsRes, tradesRes] = await Promise.all([
         fetch('/api/overview'),
-        fetch('/api/signals'),
         fetch('/api/news'),
         fetch('/api/trades')
       ]);
 
       setOverview(await overviewRes.json());
-      setSignals(await signalsRes.json());
       setNews(await newsRes.json());
       setTrades(await tradesRes.json());
     };
@@ -45,10 +44,10 @@ function App() {
         <nav>
           <button className={view === 'overview' ? 'nav active' : 'nav'} onClick={() => setView('overview')}>Overview</button>
           <button className={view === 'markets' ? 'nav active' : 'nav'} onClick={() => setView('markets')}>Markets</button>
-          <button className="nav">Signals</button>
+          <button className={view === 'signals' ? 'nav active' : 'nav'} onClick={() => setView('signals')}>Signals</button>
           <button className={view === 'backtests' ? 'nav active' : 'nav'} onClick={() => setView('backtests')}>Backtests</button>
           <button className="nav">Execution</button>
-          <button className="nav">Risk</button>
+          <button className={view === 'risk' ? 'nav active' : 'nav'} onClick={() => setView('risk')}>Risk</button>
         </nav>
       </aside>
 
@@ -58,7 +57,11 @@ function App() {
           <div className="status-pill">System online</div>
         </header>
 
-        {view === 'markets' ? <Markets /> : view === 'backtests' ? <Backtests /> : (<>
+        {view === 'markets' ? <Markets />
+          : view === 'backtests' ? <Backtests />
+          : view === 'signals' ? <Signals />
+          : view === 'risk' ? <Risk />
+          : (<>
 
         <section className="stats-grid">
           <StatCard title="Account Value" value={`$${overview?.accountValue ?? 0}`} tone="blue" />
@@ -101,27 +104,6 @@ function App() {
         </section>
 
         <section className="panel-grid two-col">
-          <div className="panel">
-            <div className="panel-header">
-              <h3>Signals</h3>
-              <span>AI + rules</span>
-            </div>
-            <div className="list-block compact">
-              {signals.map(signal => (
-                <div key={signal.id} className="signal-item">
-                  <div className="signal-topline">
-                    <strong>{signal.symbol}</strong>
-                    <span className="badge">{signal.side}</span>
-                  </div>
-                  <small>{signal.strategy}</small>
-                  <div className="signal-meta">
-                    <span>{signal.confidence}%</span>
-                    <span>{signal.status}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
 
           <div className="panel">
             <div className="panel-header">

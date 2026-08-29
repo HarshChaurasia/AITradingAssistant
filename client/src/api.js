@@ -25,6 +25,30 @@ export const api = {
     }),
   candles: (symbolId, timeframe, limit = 500) =>
     request(`/api/candles?symbolId=${symbolId}&timeframe=${timeframe}&limit=${limit}`),
+  signals: (params = '') => request(`/api/signals${params}`),
+  approveSignal: (id) => request(`/api/signals/${id}/approve`, { method: 'POST' }),
+  rejectSignal: (id, reason) =>
+    request(`/api/signals/${id}/reject`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason })
+    }),
+  riskState: (mode = 'demo') => request(`/api/risk/state?mode=${mode}`),
+  riskSettings: () => request('/api/risk/settings'),
+  saveRiskSettings: (patch) =>
+    request('/api/risk/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch)
+    }),
+  killSwitch: (mode, on, reason) =>
+    request('/api/risk/kill-switch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode, on, reason })
+    }),
+  scheduler: () => request('/api/scheduler'),
+  runScheduler: () => request('/api/scheduler/run', { method: 'POST' }),
   strategies: () => request('/api/strategies'),
   backtests: () => request('/api/backtests'),
   backtest: (id) => request(`/api/backtests/${id}`),

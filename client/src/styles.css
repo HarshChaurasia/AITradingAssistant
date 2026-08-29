@@ -362,3 +362,42 @@ button {
 }
 
 .metrics-block h4 { margin: 0 0 8px; font-size: 13px; color: #9aa7bc; }
+
+.signal-card {
+  border: 1px solid #2d3748;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: #121a26;
+}
+
+.signal-card.rejected { opacity: 0.65; }
+.signal-card.approved { border-color: rgba(34, 197, 94, 0.4); }
+
+.signal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.signal-head small { display: block; color: #9aa7bc; margin-top: 2px; }
+
+.badge.buy { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+.badge.sell { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+
+.status-tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #9aa7bc; }
+.status-tag.approved { color: #86efac; }
+.status-tag.rejected { color: #fca5a5; }
+
+.signal-numbers { display: flex; flex-wrap: wrap; gap: 16px; margin: 10px 0; font-size: 13px; color: #9aa7bc; }
+.signal-numbers strong { color: #e6edf7; }
+
+.signal-actions { display: flex; gap: 8px; margin-top: 10px; }
+.signal-actions button {
+  background: #16202e; color: #e6edf7; border: 1px solid #2d3748;
+  border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px;
+}
+
+.link { background: none; border: none; color: #67e8f9; cursor: pointer; padding: 0; font-size: 12px; }
+
+.gates { list-style: none; padding: 0; margin: 10px 0 0; font-size: 12px; }
+.gate { display: flex; gap: 10px; padding: 4px 0; border-bottom: 1px solid #1f2937; }
+.gate-name { min-width: 190px; text-transform: capitalize; }
+.gate.pass .gate-name { color: #86efac; }
+.gate.fail .gate-name { color: #fca5a5; }
+.gate-detail { color: #9aa7bc; }
