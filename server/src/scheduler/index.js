@@ -18,7 +18,9 @@ function createScheduler({
   bridge,
   intervalMs = 60000,
   mode = process.env.TRADING_MODE || 'demo',
-  timeframe = 'H1',
+  // The timeframe the strategy was validated on. Trading a timeframe the
+  // backtest never covered is running an unvalidated strategy.
+  timeframe = process.env.STRATEGY_TIMEFRAME || 'H1',
   syncCandlesFn = syncCandles,
   listSymbolsFn = listSymbols,
   generateSignalsFn = generateSignals,
