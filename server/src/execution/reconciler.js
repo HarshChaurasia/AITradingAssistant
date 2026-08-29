@@ -61,6 +61,7 @@ async function snapshotEquity(bridge, mode) {
 async function reconcile({ bridge, mode = 'demo' }) {
   const { positions = [] } = await bridge.positions();
   const openTickets = new Set(positions.map((p) => Number(p.ticket)));
+  const byTicket = new Map(positions.map((p) => [Number(p.ticket), p]));
 
   // PENDING is deliberately excluded: those orders were never confirmed, so
   // their absence from the broker means nothing.
@@ -77,7 +78,22 @@ async function reconcile({ bridge, mode = 'demo' }) {
     const ticket = Number(trade.broker_ticket);
 
     if (openTickets.has(ticket)) {
-      await query('UPDATE trades SET last_synced_at = UTC_TIMESTAMP() WHERE id = ?', [trade.id]);
+      // The broker is the source of truth for the fill, so correct the stored
+      // entry price and volume from its own record. Some brokers report a
+      // zero price in the order result, and an entry of 0 quietly poisons
+      // every P&L number computed from the journal.
+      const position = byTicket.get(ticket);
+      const brokerEntry = Number(position?.price_open);
+      const brokerVolume = Number(position?.volume);
+
+      await query(
+        `UPDATE trades
+            SET last_synced_at = UTC_TIMESTAMP(),
+                entry_price = CASE WHEN ? > 0 THEN ? ELSE entry_price END,
+                lot         = CASE WHEN ? > 0 THEN ? ELSE lot END
+          WHERE id = ?`,
+        [brokerEntry || 0, brokerEntry || 0, brokerVolume || 0, brokerVolume || 0, trade.id]
+      );
       updated += 1;
       continue;
     }

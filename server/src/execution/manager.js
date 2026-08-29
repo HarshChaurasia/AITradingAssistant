@@ -112,6 +112,13 @@ async function executeSignal({ bridge, signal, mode, balance }) {
     return { status: 'failed', tradeId, reason: result.comment || 'the broker rejected the order' };
   }
 
+  // Some brokers return price 0 in the order result rather than the fill
+  // price, and `??` would happily store that zero - which silently corrupts
+  // every P&L figure derived from the journal. Treat non-positive as missing;
+  // the reconciler then corrects it from the broker's own position record.
+  const fillPrice = Number(result.price) > 0 ? Number(result.price) : Number(signal.entry);
+  const filledLot = Number(result.volume) > 0 ? Number(result.volume) : decision.lot;
+
   await query(
     `UPDATE trades
         SET status = 'OPEN', broker_ticket = ?, retcode = ?, broker_comment = ?,
@@ -120,8 +127,8 @@ async function executeSignal({ bridge, signal, mode, balance }) {
     [
       result.ticket ?? null, result.retcode ?? null,
       String(result.comment || '').slice(0, 255),
-      result.price ?? Number(signal.entry),
-      result.volume ?? decision.lot,
+      fillPrice,
+      filledLot,
       tradeId
     ]
   );

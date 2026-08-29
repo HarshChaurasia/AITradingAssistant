@@ -193,3 +193,27 @@ test('the trade row is written before the order is sent', async (t) => {
   assert.equal(rowsAtSendTime.length, 1, 'a row exists before the broker is called');
   assert.equal(rowsAtSendTime[0].status, 'PENDING');
 });
+
+test('a broker that reports a zero fill price does not store a zero entry', async (t) => {
+  const { symbolId, strategyId } = await seeded(t);
+  await insertSignal({ strategyId, symbolId });
+
+  const { executeApprovedSignals } = require('../src/execution/manager');
+  const { query } = require('../src/db/pool');
+
+  // Measured against a real broker: order_send returns price 0 rather than the
+  // fill price. Stored naively, that zero poisons every P&L figure derived
+  // from the journal.
+  const bridge = {
+    order: async (p) => ({ ok: true, ticket: 888, price: 0, volume: 0, retcode: 10009, comment: 'Request executed' }),
+    positions: async () => ({ positions: [] }),
+    deals: async () => ({ deals: [] }),
+    closePosition: async () => ({ ok: true })
+  };
+
+  await executeApprovedSignals({ bridge, mode: 'demo', balance: 10000 });
+
+  const [trade] = await query('SELECT entry_price, lot FROM trades');
+  assert.ok(Number(trade.entry_price) > 0, 'entry price must never be stored as zero');
+  assert.ok(Number(trade.lot) > 0, 'lot must never be stored as zero');
+});

@@ -190,3 +190,48 @@ test('PENDING trades are left alone, not treated as closed', async (t) => {
   assert.equal(result.closed, 0);
   assert.equal((await query('SELECT status FROM trades'))[0].status, 'PENDING');
 });
+
+test('reconciliation corrects a bad entry price from the broker position', async (t) => {
+  const symbolId = await seeded(t);
+  const { query } = require('../src/db/pool');
+
+  // A trade written with a zero entry, as a broker reporting price 0 produces.
+  await query(
+    `INSERT INTO trades (symbol_id, mode, side, lot, entry_price, sl, opened_at, status, broker_ticket)
+     VALUES (?, 'demo', 'BUY', 0.7, 0, 76152, UTC_TIMESTAMP(), 'OPEN', 777)`,
+    [symbolId]
+  );
+
+  const { reconcile } = require('../src/execution/reconciler');
+  const result = await reconcile({
+    bridge: stubBridge({
+      positions: [{ ticket: 777, symbol: 'XAUUSD', side: 'BUY', volume: 0.7, price_open: 78098.84, profit: -10 }]
+    }),
+    mode: 'demo'
+  });
+
+  assert.equal(result.updated, 1);
+  const [trade] = await query('SELECT entry_price, lot FROM trades WHERE broker_ticket = 777');
+  assert.equal(Number(trade.entry_price), 78098.84, 'the broker is the source of truth for the fill');
+  assert.equal(Number(trade.lot), 0.7);
+});
+
+test('reconciliation does not overwrite a good entry price with a missing one', async (t) => {
+  const symbolId = await seeded(t);
+  const { query } = require('../src/db/pool');
+
+  await query(
+    `INSERT INTO trades (symbol_id, mode, side, lot, entry_price, sl, opened_at, status, broker_ticket)
+     VALUES (?, 'demo', 'BUY', 0.5, 12345.67, 12000, UTC_TIMESTAMP(), 'OPEN', 778)`,
+    [symbolId]
+  );
+
+  const { reconcile } = require('../src/execution/reconciler');
+  await reconcile({
+    bridge: stubBridge({ positions: [{ ticket: 778, symbol: 'XAUUSD', side: 'BUY', volume: 0.5 }] }),
+    mode: 'demo'
+  });
+
+  const [trade] = await query('SELECT entry_price FROM trades WHERE broker_ticket = 778');
+  assert.equal(Number(trade.entry_price), 12345.67, 'a position with no price_open must not zero the stored one');
+});
