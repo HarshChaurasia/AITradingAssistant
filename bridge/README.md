@@ -41,8 +41,21 @@ Listens on `127.0.0.1:8000`. Every route requires the header
 | `GET /symbols` | Full contract specification for every broker symbol |
 | `GET /candles?symbol=&timeframe=&count=` | OHLCV bars |
 
-Phase 1 is read-only by design. There are no order endpoints, so this bridge
-cannot place a trade.
+## Write endpoints and their guards
+
+`POST /order`, `POST /close`, `GET /positions` and `GET /deals` exist from
+phase 4. Three independent guards stand in front of every write:
+
+| Guard | Default | Effect |
+| --- | --- | --- |
+| `MT5_ALLOW_TRADING` | `false` | The bridge is read-only until this is `true` |
+| `MT5_ALLOW_LIVE` | `false` | A REAL account is refused; a demo account is fine |
+| stop loss required | always | An order with no `sl` is rejected with 400 |
+
+They overlap deliberately. This is the boundary where software starts
+spending money, and a single check is one bug away from being no check. The
+account-type guard fails closed: if the account type cannot be read, it is
+treated as real and refused.
 
 ## Broker time
 

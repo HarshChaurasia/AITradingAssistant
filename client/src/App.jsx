@@ -3,6 +3,7 @@ import Markets from './pages/Markets';
 import Backtests from './pages/Backtests';
 import Signals from './pages/Signals';
 import Risk from './pages/Risk';
+import Trades from './pages/Trades';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const chartData = [
@@ -19,19 +20,16 @@ function App() {
   const [view, setView] = useState('overview');
   const [overview, setOverview] = useState(null);
   const [news, setNews] = useState([]);
-  const [trades, setTrades] = useState([]);
 
   useEffect(() => {
     const load = async () => {
-      const [overviewRes, newsRes, tradesRes] = await Promise.all([
+      const [overviewRes, newsRes] = await Promise.all([
         fetch('/api/overview'),
         fetch('/api/news'),
-        fetch('/api/trades')
       ]);
 
       setOverview(await overviewRes.json());
       setNews(await newsRes.json());
-      setTrades(await tradesRes.json());
     };
 
     load();
@@ -46,7 +44,7 @@ function App() {
           <button className={view === 'markets' ? 'nav active' : 'nav'} onClick={() => setView('markets')}>Markets</button>
           <button className={view === 'signals' ? 'nav active' : 'nav'} onClick={() => setView('signals')}>Signals</button>
           <button className={view === 'backtests' ? 'nav active' : 'nav'} onClick={() => setView('backtests')}>Backtests</button>
-          <button className="nav">Execution</button>
+          <button className={view === 'execution' ? 'nav active' : 'nav'} onClick={() => setView('execution')}>Execution</button>
           <button className={view === 'risk' ? 'nav active' : 'nav'} onClick={() => setView('risk')}>Risk</button>
         </nav>
       </aside>
@@ -60,6 +58,7 @@ function App() {
         {view === 'markets' ? <Markets />
           : view === 'backtests' ? <Backtests />
           : view === 'signals' ? <Signals />
+          : view === 'execution' ? <Trades />
           : view === 'risk' ? <Risk />
           : (<>
 
@@ -123,32 +122,6 @@ function App() {
         </section>
 
         <section className="panel-grid bottom-grid">
-          <div className="panel">
-            <div className="panel-header">
-              <h3>Recent trades</h3>
-              <span>Execution log</span>
-            </div>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Side</th>
-                  <th>Lot</th>
-                  <th>P&L</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trades.map(trade => (
-                  <tr key={trade.id}>
-                    <td>{trade.symbol}</td>
-                    <td>{trade.side}</td>
-                    <td>{trade.lot}</td>
-                    <td className={trade.pnl >= 0 ? 'up' : 'down'}>${trade.pnl}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </section>
 
         </>)}

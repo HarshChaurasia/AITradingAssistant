@@ -29,6 +29,10 @@ const scheduler = createScheduler({ bridge: bridgeFromEnv() });
 app.use('/api', createSignalRouter());
 app.use('/api', createRiskRouter({ scheduler }));
 
+const { createExecutionRouter } = require('./routes/execution');
+
+app.use('/api', createExecutionRouter({ bridge: bridgeFromEnv() }));
+
 // Opt-in: an unattended loop should never start just because the server did.
 if (process.env.SCHEDULER_ENABLED === 'true') {
   scheduler.start();
@@ -52,12 +56,6 @@ const sampleNews = [
   { id: 3, title: 'Crypto markets see renewed momentum after ETF inflows', source: 'CoinDesk', time: '41 min ago', impact: 'Medium' }
 ];
 
-const sampleTrades = [
-  { id: 1, symbol: 'EUR/USD', side: 'BUY', lot: 0.10, pnl: 2.8, status: 'Closed' },
-  { id: 2, symbol: 'XAU/USD', side: 'SELL', lot: 0.04, pnl: -1.1, status: 'Closed' },
-  { id: 3, symbol: 'EUR/USD', side: 'BUY', lot: 0.08, pnl: 1.9, status: 'Open' }
-];
-
 app.get('/api/health', async (req, res) => {
   let database = { connected: false, message: 'unknown' };
   try {
@@ -75,10 +73,6 @@ app.get('/api/overview', (req, res) => {
 
 app.get('/api/news', (req, res) => {
   res.json(sampleNews);
-});
-
-app.get('/api/trades', (req, res) => {
-  res.json(sampleTrades);
 });
 
 app.use((err, req, res, next) => {

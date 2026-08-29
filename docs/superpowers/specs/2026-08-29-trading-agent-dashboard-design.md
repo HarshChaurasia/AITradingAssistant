@@ -284,6 +284,35 @@ Each phase ends in something observable.
 5. **Hardening** — authentication, Telegram alerts, LLM commentary, Hostinger
    deployment. *Precedes the $100 live phase.*
 
+## 13b. Execution verification
+
+Recorded 2026-08-29 against MetaQuotes-Demo account 111853214.
+
+Verified with the market closed (Saturday), so no fill was possible:
+
+- Guard state: `trading_enabled: true`, `live_allowed: false`,
+  `account_is_real: false`.
+- An order with no stop loss is refused with `400 no_stop_loss`.
+- An order with `sl: 0` is refused the same way.
+- An order without the bridge token is refused with `401`.
+- A negative lot is refused with `400`.
+- A well-formed order reaches the broker's matching engine and is refused with
+  `retcode 10018 Market closed`. Account balance and equity unchanged.
+- Reconciliation against the real account returns zero positions and records a
+  genuine equity snapshot of 100000.00.
+
+Two bugs were found and fixed by this exercise:
+
+1. `type_filling` was hardcoded to IOC, which this broker refuses with
+   `retcode 10030 Unsupported filling mode`. The filling mode is now read from
+   the symbol's advertised bitmask. This would have broken the very first
+   live order.
+2. The bridge blocked for ~65 seconds on a failed connect because MT5 holds
+   the Python GIL for the whole call (see the bridge README).
+
+**Outstanding:** one real round trip - order, reconcile, close - on an open
+market. That is the last check before the demo period starts.
+
 ## 14. Known issue in the existing scaffold
 
 `server/package.json` and `client/package.json` each declare

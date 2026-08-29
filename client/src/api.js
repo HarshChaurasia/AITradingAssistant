@@ -49,6 +49,23 @@ export const api = {
     }),
   scheduler: () => request('/api/scheduler'),
   runScheduler: () => request('/api/scheduler/run', { method: 'POST' }),
+  trades: (mode = 'demo', status = '') =>
+    request(`/api/trades?mode=${mode}${status ? `&status=${status}` : ''}`),
+  tradeStats: (mode = 'demo') => request(`/api/trades/stats?mode=${mode}`),
+  equity: (mode = 'demo') => request(`/api/equity?mode=${mode}`),
+  runExecution: (mode = 'demo') =>
+    request('/api/execution/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode })
+    }),
+  reconcile: (mode = 'demo') =>
+    request('/api/execution/reconcile', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode })
+    }),
+  closeTrade: (tradeId) => request(`/api/execution/close/${tradeId}`, { method: 'POST' }),
   strategies: () => request('/api/strategies'),
   backtests: () => request('/api/backtests'),
   backtest: (id) => request(`/api/backtests/${id}`),

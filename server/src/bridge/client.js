@@ -3,21 +3,27 @@
  * Node 22 provides global fetch and AbortSignal.timeout.
  */
 
+const ORDER_TIMEOUT_MS = 30000;
+
 function createBridgeClient({ baseUrl, token, timeoutMs = 15000 }) {
   if (!baseUrl) throw new Error('bridge client requires baseUrl');
 
-  async function request(path, params, overrideTimeoutMs) {
+  async function request(path, params, overrideTimeoutMs, options = {}) {
     const url = new URL(path, baseUrl);
     for (const [key, value] of Object.entries(params || {})) {
       if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
     }
 
     const budgetMs = overrideTimeoutMs ?? timeoutMs;
+    const headers = { 'X-Bridge-Token': token || '' };
+    if (options.body !== undefined) headers['content-type'] = 'application/json';
 
     let response;
     try {
       response = await fetch(url, {
-        headers: { 'X-Bridge-Token': token || '' },
+        method: options.method || 'GET',
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
         signal: AbortSignal.timeout(budgetMs)
       });
     } catch (cause) {
@@ -56,7 +62,17 @@ function createBridgeClient({ baseUrl, token, timeoutMs = 15000 }) {
     account: () => request('/account', undefined, 8000),
     symbols: () => request('/symbols'),
     candles: ({ symbol, timeframe = 'H1', count = 500 }) =>
-      request('/candles', { symbol, timeframe, count })
+      request('/candles', { symbol, timeframe, count }),
+
+    positions: () => request('/positions', undefined, 20000),
+    deals: ({ ticket }) => request('/deals', { ticket }, 20000),
+
+    // Orders get their own, longer budget. A fill can take several seconds,
+    // and timing out mid-order leaves the caller unsure whether a position
+    // now exists - the worst possible state to be in.
+    order: (payload) => request('/order', undefined, ORDER_TIMEOUT_MS, { method: 'POST', body: payload }),
+    closePosition: ({ ticket }) =>
+      request('/close', undefined, ORDER_TIMEOUT_MS, { method: 'POST', body: { ticket } })
   };
 }
 

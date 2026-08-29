@@ -97,6 +97,45 @@ def not_connected_response():
     return jsonify(error=_state["message"], connected=False), 503
 
 
+# --- Write guards ------------------------------------------------------
+#
+# Three independent checks stand in front of every write. They overlap on
+# purpose: this is the boundary where software starts spending money, and a
+# single check is one bug away from being no check.
+
+def trading_enabled():
+    return os.getenv("MT5_ALLOW_TRADING", "false").lower() == "true"
+
+
+def live_allowed():
+    return os.getenv("MT5_ALLOW_LIVE", "false").lower() == "true"
+
+
+def account_is_real():
+    """True when the logged-in account trades real money."""
+    info = mt5.account_info()
+    if info is None:
+        return True  # Unknown means treat it as real. Fail closed.
+    # ACCOUNT_TRADE_MODE_REAL == 2 in the MT5 API.
+    return int(info.trade_mode) == 2
+
+
+def write_guard():
+    """Return an error response when writing is not permitted, else None."""
+    if not trading_enabled():
+        return jsonify(
+            error="trading is disabled on this bridge (set MT5_ALLOW_TRADING=true to enable)",
+            code="trading_disabled",
+        ), 403
+    if account_is_real() and not live_allowed():
+        return jsonify(
+            error="refusing to trade a REAL account (set MT5_ALLOW_LIVE=true to permit)",
+            code="live_account_blocked",
+        ), 403
+    return None
+
+
+
 # --- Broker timezone -------------------------------------------------------
 #
 # MT5 exposes no API for the trade server's timezone, and bar times come back
@@ -214,6 +253,9 @@ def health():
         server=account.server if account else None,
         balance=account.balance if account else None,
         trade_allowed=info.trade_allowed if info else False,
+        trading_enabled=trading_enabled(),
+        live_allowed=live_allowed(),
+        account_is_real=account_is_real(),
         **dict(zip(
             ("server_utc_offset_seconds", "offset_source", "offset_trustworthy"),
             broker_offset(),
@@ -326,6 +368,215 @@ def candles():
         offset_trustworthy=offset_trustworthy,
         candles=out,
     )
+
+
+
+def filling_mode_for(symbol):
+    """Pick a filling mode the broker actually supports for this symbol.
+
+    Hardcoding IOC gets retcode 10030 'Unsupported filling mode' on brokers
+    that only allow FOK, and the order never reaches the market. The symbol
+    advertises what it accepts as a bitmask; honour it.
+    """
+    info = mt5.symbol_info(symbol)
+    allowed = int(getattr(info, "filling_mode", 0)) if info else 0
+
+    # SYMBOL_FILLING_FOK == 1, SYMBOL_FILLING_IOC == 2.
+    if allowed & 1:
+        return mt5.ORDER_FILLING_FOK
+    if allowed & 2:
+        return mt5.ORDER_FILLING_IOC
+    # Neither advertised: RETURN is the safe fallback for market execution.
+    return mt5.ORDER_FILLING_RETURN
+
+
+@app.get("/positions")
+@require_token
+def positions():
+    if not connected():
+        return not_connected_response()
+
+    rows = mt5.positions_get()
+    if rows is None:
+        return jsonify(positions=[])
+
+    return jsonify(positions=[
+        {
+            "ticket": p.ticket,
+            "symbol": p.symbol,
+            # POSITION_TYPE_BUY == 0
+            "side": "BUY" if p.type == 0 else "SELL",
+            "volume": p.volume,
+            "price_open": p.price_open,
+            "price_current": p.price_current,
+            "sl": p.sl,
+            "tp": p.tp,
+            "profit": p.profit,
+            "swap": p.swap,
+            "time": int(p.time),
+        }
+        for p in rows
+    ])
+
+
+@app.get("/deals")
+@require_token
+def deals():
+    """Closed deals for one position, used to recover the realised result."""
+    if not connected():
+        return not_connected_response()
+
+    ticket = request.args.get("ticket")
+    if not ticket:
+        return jsonify(error="ticket is required"), 400
+
+    rows = mt5.history_deals_get(position=int(ticket))
+    if rows is None:
+        return jsonify(deals=[])
+
+    return jsonify(deals=[
+        {
+            "ticket": d.ticket,
+            "position_id": d.position_id,
+            "symbol": d.symbol,
+            "volume": d.volume,
+            "price": d.price,
+            "profit": d.profit,
+            "commission": d.commission,
+            "swap": d.swap,
+            "time": int(d.time),
+            # DEAL_ENTRY_IN == 0, DEAL_ENTRY_OUT == 1
+            "entry": int(d.entry),
+        }
+        for d in rows
+    ])
+
+
+@app.post("/order")
+@require_token
+def order():
+    if not connected():
+        return not_connected_response()
+
+    blocked = write_guard()
+    if blocked:
+        return blocked
+
+    body = request.get_json(silent=True) or {}
+    symbol = body.get("symbol")
+    side = str(body.get("side", "")).upper()
+    lot = body.get("lot")
+    sl = body.get("sl")
+    tp = body.get("tp")
+
+    if not symbol:
+        return jsonify(error="symbol is required"), 400
+    if side not in ("BUY", "SELL"):
+        return jsonify(error="side must be BUY or SELL"), 400
+    try:
+        lot = float(lot)
+    except (TypeError, ValueError):
+        return jsonify(error="lot must be a number"), 400
+    if lot <= 0:
+        return jsonify(error="lot must be greater than zero"), 400
+
+    # The stop loss check is repeated here on purpose. The Node risk engine
+    # already enforces it; this is the last line of defence, and the one
+    # failure mode that must never get through.
+    try:
+        sl = float(sl)
+    except (TypeError, ValueError):
+        return jsonify(error="a stop loss is required on every order", code="no_stop_loss"), 400
+    if sl <= 0:
+        return jsonify(error="a stop loss is required on every order", code="no_stop_loss"), 400
+
+    if not mt5.symbol_select(symbol, True):
+        return jsonify(error=f"symbol_select failed for {symbol}: {mt5.last_error()}"), 400
+
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        return jsonify(error=f"no tick for {symbol}; the market may be closed"), 400
+
+    price = tick.ask if side == "BUY" else tick.bid
+    order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
+
+    request_payload = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": lot,
+        "type": order_type,
+        "price": price,
+        "sl": sl,
+        "deviation": int(body.get("deviation", os.getenv("MT5_MAX_DEVIATION", 20))),
+        "magic": 20260829,
+        "comment": str(body.get("comment", "trading-agent"))[:31],
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": filling_mode_for(symbol),
+    }
+    if tp:
+        request_payload["tp"] = float(tp)
+
+    result = mt5.order_send(request_payload)
+    if result is None:
+        return jsonify(error=f"order_send returned nothing: {mt5.last_error()}"), 502
+
+    ok = result.retcode == mt5.TRADE_RETCODE_DONE
+    return jsonify(
+        ok=ok,
+        retcode=int(result.retcode),
+        comment=result.comment,
+        ticket=int(result.order) if ok else None,
+        position=int(getattr(result, "deal", 0)) or None,
+        price=float(result.price) if ok else None,
+        volume=float(result.volume) if ok else None,
+    ), (200 if ok else 400)
+
+
+@app.post("/close")
+@require_token
+def close_position():
+    if not connected():
+        return not_connected_response()
+
+    blocked = write_guard()
+    if blocked:
+        return blocked
+
+    body = request.get_json(silent=True) or {}
+    ticket = body.get("ticket")
+    if not ticket:
+        return jsonify(error="ticket is required"), 400
+
+    found = mt5.positions_get(ticket=int(ticket))
+    if not found:
+        return jsonify(error=f"no open position with ticket {ticket}"), 404
+    position = found[0]
+
+    tick = mt5.symbol_info_tick(position.symbol)
+    if tick is None:
+        return jsonify(error=f"no tick for {position.symbol}; the market may be closed"), 400
+
+    # Closing is the opposite side at the opposite price.
+    closing_buy = position.type != 0
+    result = mt5.order_send({
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": position.symbol,
+        "volume": position.volume,
+        "type": mt5.ORDER_TYPE_BUY if closing_buy else mt5.ORDER_TYPE_SELL,
+        "position": int(ticket),
+        "price": tick.ask if closing_buy else tick.bid,
+        "deviation": int(body.get("deviation", os.getenv("MT5_MAX_DEVIATION", 20))),
+        "magic": 20260829,
+        "comment": "trading-agent close",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": filling_mode_for(position.symbol),
+    })
+
+    if result is None:
+        return jsonify(error=f"order_send returned nothing: {mt5.last_error()}"), 502
+
+    ok = result.retcode == mt5.TRADE_RETCODE_DONE
+    return jsonify(ok=ok, retcode=int(result.retcode), comment=result.comment), (200 if ok else 400)
 
 
 @app.post("/reconnect")

@@ -2,6 +2,8 @@ const { syncCandles } = require('../market/candles');
 const { listSymbols } = require('../market/symbols');
 const { generateSignals } = require('../signals/generator');
 const { expireStaleSignals } = require('../signals/store');
+const { executeApprovedSignals } = require('../execution/manager');
+const { reconcile } = require('../execution/reconciler');
 
 /**
  * Periodic candle sync followed by signal generation.
@@ -21,6 +23,13 @@ function createScheduler({
   listSymbolsFn = listSymbols,
   generateSignalsFn = generateSignals,
   expireStaleSignalsFn = expireStaleSignals,
+  executeFn = executeApprovedSignals,
+  reconcileFn = reconcile,
+  // A loop that watches and a loop that trades are different things, so they
+  // get separate switches. Even with the scheduler running, no order is sent
+  // until this is explicitly enabled.
+  executionEnabled = process.env.EXECUTION_ENABLED === 'true',
+  balance = Number(process.env.ACCOUNT_BALANCE_HINT || 10000),
   logger = console
 } = {}) {
   let timer = null;
@@ -42,9 +51,21 @@ function createScheduler({
     }
 
     const signals = await generateSignalsFn({ mode, timeframe });
+
+    // Execute before reconciling: a fill from this tick is then picked up by
+    // the next one, rather than being reconciled against a broker that has
+    // not registered it yet.
+    const execution = executionEnabled
+      ? await executeFn({ bridge, mode, balance })
+      : { attempted: 0, filled: 0, skipped: 0, failed: 0, disabled: true };
+
+    const reconciliation = await reconcileFn({ bridge, mode });
     const expired = await expireStaleSignalsFn({ olderThanMinutes: 60, mode });
 
-    lastResult = { at: new Date().toISOString(), symbolsSynced, signals, expired };
+    lastResult = {
+      at: new Date().toISOString(),
+      symbolsSynced, signals, execution, reconciliation, expired
+    };
     return lastResult;
   }
 
