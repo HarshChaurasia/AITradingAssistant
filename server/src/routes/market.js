@@ -2,6 +2,7 @@ const express = require('express');
 
 const { syncSymbols, listSymbols, setSymbolEnabled, setSymbolWatched } = require('../market/symbols');
 const { syncCandles, getCandles, TIMEFRAMES } = require('../market/candles');
+const { refreshMarketStatus, marketStatus } = require('../market/market-hours');
 const { query } = require('../db/pool');
 
 function createMarketRouter({ bridge }) {
@@ -38,7 +39,45 @@ function createMarketRouter({ bridge }) {
 
   router.post('/symbols/sync', async (req, res, next) => {
     try {
-      res.json(await syncSymbols(bridge));
+      const result = await syncSymbols(bridge);
+      // Market status is probed for the watched handful only. It is a round
+      // trip per symbol, and only those can ever produce a signal.
+      const markets = await refreshMarketStatus(bridge).catch((error) => ({ error: error.message }));
+      res.json({ ...result, markets });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/symbols/market-status/refresh', async (req, res, next) => {
+    try {
+      res.json(await refreshMarketStatus(bridge));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Which watched markets are open right now, and why.
+   *
+   * The commonest weekend question is "why is nothing happening", and the
+   * answer is usually that the instrument is shut. Better to say so plainly
+   * than to leave an empty signal list to be interpreted.
+   */
+  router.get('/symbols/market-status', async (req, res, next) => {
+    try {
+      const rows = await query(
+        'SELECT * FROM symbols WHERE watched = 1 OR enabled = 1 ORDER BY broker_symbol'
+      );
+      const now = new Date();
+      res.json(rows.map((symbol) => ({
+        symbolId: symbol.id,
+        symbol: symbol.broker_symbol,
+        tradeable: symbol.enabled === 1,
+        checkedAt: symbol.market_checked_at,
+        tickAgeSeconds: symbol.tick_age_seconds,
+        ...marketStatus({ symbol, now })
+      })));
     } catch (error) {
       next(error);
     }
@@ -53,6 +92,16 @@ function createMarketRouter({ bridge }) {
       // Two independent flags: watching a symbol must never make it tradeable.
       if (typeof enabled === 'boolean') await setSymbolEnabled(Number(req.params.id), enabled);
       if (typeof watched === 'boolean') await setSymbolWatched(Number(req.params.id), watched);
+
+      // A symbol that has just become watched or tradeable has no market
+      // status, and the gate fails closed without one. Probe it now rather
+      // than leaving the operator to wonder why their newly enabled symbol
+      // refuses every signal for a minute.
+      if (enabled === true || watched === true) {
+        const rows = await query('SELECT id, broker_symbol FROM symbols WHERE id = ?', [Number(req.params.id)]);
+        await refreshMarketStatus(bridge, { symbols: rows }).catch(() => {});
+      }
+
       res.json({ ok: true });
     } catch (error) {
       next(error);

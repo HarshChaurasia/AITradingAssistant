@@ -37,6 +37,11 @@ const DEFAULTS = {
   signalExpiryMinutes: 60,
   // Bars pulled when a backtest finds nothing stored.
   backfillBars: 2000,
+  // How long without a quote before an instrument counts as shut. An open
+  // market ticks constantly: measured on this account, BTCUSD was 1 second
+  // stale on a Sunday while EURUSD was 38 hours stale. Ten minutes sits far
+  // from both.
+  staleTickSeconds: 600,
   // Where the risk engine's account size comes from. 'broker' asks MT5 and
   // falls back to the hint if the terminal is unreachable.
   balanceSource: 'broker'
@@ -81,6 +86,7 @@ function normalise(raw = {}) {
     alertCooldownMinutes: coerceInteger(merged.alertCooldownMinutes, DEFAULTS.alertCooldownMinutes, { min: 1, max: 1440 }),
     signalExpiryMinutes: coerceInteger(merged.signalExpiryMinutes, DEFAULTS.signalExpiryMinutes, { min: 5, max: 10080 }),
     backfillBars: coerceInteger(merged.backfillBars, DEFAULTS.backfillBars, { min: 100, max: 20000 }),
+    staleTickSeconds: coerceInteger(merged.staleTickSeconds, DEFAULTS.staleTickSeconds, { min: 60, max: 86400 }),
     balanceSource: merged.balanceSource === 'hint' ? 'hint' : 'broker'
   };
 }

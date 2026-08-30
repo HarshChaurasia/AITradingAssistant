@@ -13,8 +13,8 @@ async function seeded(t) {
 
   await query(
     `INSERT INTO symbols (broker_symbol, digits, point, contract_size, tick_size,
-       tick_value, min_lot, lot_step, max_lot, enabled, currency_profit, currency_margin, synced_at)
-     VALUES ('EURUSD', 5, 0.00001, 100000, 0.00001, 1, 0.01, 0.01, 100, 1, 'USD', 'EUR', UTC_TIMESTAMP())`
+       tick_value, min_lot, lot_step, max_lot, enabled, currency_profit, currency_margin, synced_at, trade_mode, market_open, market_reason, market_checked_at)
+     VALUES ('EURUSD', 5, 0.00001, 100000, 0.00001, 1, 0.01, 0.01, 100, 1, 'USD', 'EUR', UTC_TIMESTAMP(), 4, 1, 'open (test fixture)', UTC_TIMESTAMP())`
   );
   const [sym] = await query('SELECT id FROM symbols WHERE broker_symbol = ?', ['EURUSD']);
 
@@ -114,8 +114,8 @@ test('a symbol with no candles reports why, without calling the model', async (t
 
   await query(
     `INSERT INTO symbols (broker_symbol, digits, point, contract_size, tick_size,
-       tick_value, min_lot, lot_step, max_lot, synced_at)
-     VALUES ('GBPUSD', 5, 0.00001, 100000, 0.00001, 1, 0.01, 0.01, 100, UTC_TIMESTAMP())`
+       tick_value, min_lot, lot_step, max_lot, synced_at, trade_mode, market_open, market_reason, market_checked_at)
+     VALUES ('GBPUSD', 5, 0.00001, 100000, 0.00001, 1, 0.01, 0.01, 100, UTC_TIMESTAMP(), 4, 1, 'open (test fixture)', UTC_TIMESTAMP())`
   );
   const [empty] = await query('SELECT id FROM symbols WHERE broker_symbol = ?', ['GBPUSD']);
 

@@ -14,8 +14,8 @@ async function addSymbol({ name, enabled = 0, watched = 0 }) {
   await query(
     `INSERT INTO symbols (broker_symbol, digits, point, contract_size, tick_size,
        tick_value, min_lot, lot_step, max_lot, enabled, watched, currency_profit,
-       currency_margin, synced_at)
-     VALUES (?, 2, 0.01, 100, 0.01, 1, 0.01, 0.01, 100, ?, ?, 'USD', 'USD', UTC_TIMESTAMP())`,
+       currency_margin, synced_at, trade_mode, market_open, market_reason, market_checked_at)
+     VALUES (?, 2, 0.01, 100, 0.01, 1, 0.01, 0.01, 100, ?, ?, 'USD', 'USD', UTC_TIMESTAMP(), 4, 1, 'open (test fixture)', UTC_TIMESTAMP())`,
     [name, enabled, watched]
   );
   const [row] = await query('SELECT id FROM symbols WHERE broker_symbol = ?', [name]);

@@ -314,6 +314,134 @@ def symbols():
     return jsonify(symbols=out)
 
 
+# Retcodes that mean "the broker will not accept an order right now because
+# the market is not trading". Measured against this account: Axi's demo server
+# does NOT return these - it answered retcode 0 for EURUSD after 38 hours
+# without a quote - so they confirm a closure when present but can never be
+# relied on to detect one.
+MARKET_CLOSED_RETCODES = {
+    10018,  # TRADE_RETCODE_MARKET_CLOSED
+    10017,  # TRADE_RETCODE_TRADE_DISABLED
+}
+
+# The deciding signal. An open market quotes: BTCUSD and ETHUSD were 1-2
+# seconds old on the Sunday this was measured, while EURUSD, GBPUSD and XAUUSD
+# were all 137,000-odd seconds old - Friday's close. Ten minutes sits three
+# orders of magnitude away from both, so it tolerates a quiet moment on a thin
+# instrument without ever calling a shut market open.
+DEFAULT_STALE_TICK_SECONDS = 600
+
+
+@app.get("/symbol/market-status")
+@require_token
+def symbol_market_status():
+    """Is this symbol tradeable at this instant, according to the broker?
+
+    There is no weekly session calendar to read: symbol_info_session_trade is
+    MQL5-only and simply absent from the MetaTrader5 Python package, so an
+    earlier attempt to build on it produced seven empty days for every symbol
+    and raised nothing at all.
+
+    What the broker does answer is quotes. An open market ticks; a shut one
+    stops, and the gap is unmistakable - seconds against tens of hours. That
+    is the deciding signal here. order_check is asked as well and its verdict
+    is honoured when it reports the market closed, but this account's server
+    answers retcode 0 for instruments that have not quoted since Friday, so it
+    cannot be the only question.
+
+    A hardcoded "forex is shut at the weekend" rule would be wrong in both
+    directions: BTCUSD trades straight through Saturday, and plenty of
+    instruments close early on Friday or take a daily break.
+    """
+    if not connected():
+        return not_connected_response()
+
+    symbol = request.args.get("symbol")
+    if not symbol:
+        return jsonify(error="symbol is required"), 400
+
+    try:
+        stale_after = int(request.args.get("stale_after", DEFAULT_STALE_TICK_SECONDS))
+    except ValueError:
+        stale_after = DEFAULT_STALE_TICK_SECONDS
+    stale_after = max(60, min(stale_after, 86400))
+
+    if not mt5.symbol_select(symbol, True):
+        return jsonify(error=f"symbol_select failed for {symbol}: {mt5.last_error()}"), 400
+
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        return jsonify(error=f"symbol_info failed for {symbol}: {mt5.last_error()}"), 400
+
+    trade_mode = int(info.trade_mode)
+    tick = mt5.symbol_info_tick(symbol)
+    offset, _source, _trustworthy = broker_offset()
+
+    tick_age = None
+    if tick is not None and tick.time:
+        # tick.time is broker time, and so is now once the offset is applied.
+        tick_age = max(0, int(time.time() + (offset or 0) - tick.time))
+
+    def answer(is_open, reason, retcode=None):
+        return jsonify(
+            symbol=symbol,
+            open=is_open,
+            reason=reason,
+            trade_mode=trade_mode,
+            tick_age_seconds=tick_age,
+            stale_after_seconds=stale_after,
+            retcode=retcode,
+        )
+
+    # ENUM_SYMBOL_TRADE_MODE: 0 disabled, 1 long only, 2 short only,
+    # 3 close only, 4 full. Below 4 the broker restricts the instrument
+    # regardless of the hour.
+    if trade_mode < 4:
+        modes = {0: "disabled", 1: "long only", 2: "short only", 3: "close only"}
+        return answer(False, f"the broker has {symbol} set to {modes.get(trade_mode, trade_mode)}")
+
+    if tick_age is None:
+        return answer(False, f"{symbol} has never quoted on this terminal")
+
+    if tick_age > stale_after:
+        hours = tick_age / 3600.0
+        age = f"{hours:.1f}h" if hours >= 1 else f"{tick_age}s"
+        return answer(False, f"{symbol} has not quoted for {age} - the market is closed")
+
+    # The market is quoting. Ask the server whether it would actually accept an
+    # order, which catches restrictions a tick cannot show. order_check places
+    # nothing: it submits a candidate order for validation and returns.
+    price = getattr(tick, "ask", 0) or getattr(tick, "bid", 0) or 0
+    if not price:
+        return answer(False, f"{symbol} is quoting but carries no price")
+
+    check = mt5.order_check(
+        {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": float(info.volume_min),
+            "type": mt5.ORDER_TYPE_BUY,
+            "price": float(price),
+            "deviation": 20,
+            "type_filling": filling_mode_for(symbol),
+            "type_time": mt5.ORDER_TIME_GTC,
+            "comment": "market-status probe",
+        }
+    )
+
+    if check is None:
+        # No answer is not a refusal. The tick already said the market is live.
+        return answer(True, f"quoting {tick_age}s ago (order_check gave no answer)")
+
+    retcode = int(check.retcode)
+    if retcode in MARKET_CLOSED_RETCODES:
+        return answer(False, f"the broker reports the market closed ({check.comment})", retcode)
+
+    # Anything else - no money, invalid volume - means the market is trading
+    # and only this particular probe order was unacceptable.
+    return answer(True, f"quoting {tick_age}s ago, broker accepts orders (retcode {retcode})", retcode)
+
+
 @app.get("/candles")
 @require_token
 def candles():

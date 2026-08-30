@@ -2,6 +2,7 @@ const { query } = require('../db/pool');
 const { sizePosition } = require('./sizing');
 const { loadRiskSettings } = require('./settings');
 const { getState, currentTradingDay } = require('./state');
+const { marketStatus } = require('../market/market-hours');
 
 /**
  * Runs every risk gate over a candidate signal.
@@ -81,14 +82,31 @@ async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, 
       ? `strategy status is ${signal.strategy_status || 'unknown'}, live requires 'live'`
       : `${mode} mode does not require promotion`);
 
-  // 7. Position size.
+  // 7. Is the market actually open?
+  //
+  // A signal on a shut market is not merely useless - the broker rejects the
+  // order, the rejection looks like a bug, and on a Monday morning it can fill
+  // at a gap nobody sized for. The broker decides; there is no hardcoded
+  // weekend rule, because BTCUSD trades straight through it and several
+  // instruments close early on Friday.
+  //
+  // Backtests are exempt: they replay history, where "is the market open now"
+  // is not a question that has a meaning.
+  if (mode === 'backtest') {
+    add('market_open', true, 'backtests replay history; market hours do not apply');
+  } else {
+    const market = marketStatus({ symbol, now });
+    add('market_open', market.open, market.reason);
+  }
+
+  // 8. Position size.
   const sized = hasStop
     ? sizePosition({ balance, riskPct: settings.riskPctPerTrade, entry: signal.entry, sl: signal.sl, symbol })
     : { lot: 0, riskAmount: 0, stopDistance: 0, rejected: true, reason: 'no stop loss on the signal' };
   add('position_size', !sized.rejected,
     sized.rejected ? sized.reason : `${sized.lot} lots risking ${sized.riskAmount.toFixed(2)}`);
 
-  // 8. Notional exposure. Risk percentage alone does not bound position size:
+  // 9. Notional exposure. Risk percentage alone does not bound position size:
   // the tighter the stop, the larger the position for the same 1% risk. This
   // caps what that can grow into.
   const notional = sized.rejected ? 0 : sized.lot * Number(symbol.contract_size) * Number(signal.entry);

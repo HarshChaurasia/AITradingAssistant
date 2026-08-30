@@ -158,6 +158,16 @@ export default function Settings() {
         />
 
         <NumberField
+          label="Stale quote threshold (seconds)"
+          hint="How long an instrument can go without a quote before it counts as shut. An open market ticks constantly — measured here, BTCUSD was 1 second stale on a Sunday while EURUSD was 38 hours stale — so the default of 600 sits far from both."
+          value={ops.staleTickSeconds}
+          step={60}
+          min={60}
+          max={86400}
+          onChange={(v) => set({ staleTickSeconds: v })}
+        />
+
+        <NumberField
           label="Backfill bars"
           hint="How much history to pull when a backtest finds an empty candle store."
           value={ops.backfillBars}

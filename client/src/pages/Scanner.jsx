@@ -80,6 +80,7 @@ function Checks({ title, checks }) {
 export default function Scanner() {
   const [snap, setSnap] = useState(null);
   const [symbols, setSymbols] = useState([]);
+  const [markets, setMarkets] = useState([]);
   const [filter, setFilter] = useState('tradeable');
   const [sortBy, setSortBy] = useState('score');
   const [timeframeFilter, setTimeframeFilter] = useState('');
@@ -91,6 +92,7 @@ export default function Scanner() {
 
   const load = useCallback(async () => {
     setSnap(await api.scannerLive());
+    setMarkets(await api.marketStatus());
   }, []);
 
   useEffect(() => {
@@ -172,6 +174,12 @@ export default function Scanner() {
       )}
 
       <div className="scan-stats">
+        <Stat
+          label="Markets open"
+          value={markets.length ? `${markets.filter((m) => m.open).length}/${markets.length}` : '—'}
+          sub="by the broker's own calendar"
+          tone={markets.length && markets.some((m) => m.open) ? 'green' : 'orange'}
+        />
         <Stat
           label="Tradeable now"
           value={last ? last.opportunities.length : '—'}
@@ -383,6 +391,29 @@ export default function Scanner() {
         </div>
 
         <aside className="scan-side">
+          <div className="panel">
+            <div className="panel-header">
+              <h3>Market hours</h3>
+              <button className="link" disabled={busy} onClick={() => act(() => api.refreshMarketStatus())}>
+                re-sync
+              </button>
+            </div>
+            {markets.length === 0 && <p className="empty">No watched symbols.</p>}
+            <ul className="gates">
+              {markets.map((m) => (
+                <li key={m.symbolId} className={m.open ? 'gate pass' : 'gate fail'}>
+                  <span className="gate-name">{m.symbol}</span>
+                  <span className="gate-detail">{m.open ? 'open' : m.reason}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="muted">
+              A shut market is refused before an order is ever built. The calendar comes from the
+              broker, not from a hardcoded weekend rule — BTCUSD trades straight through Saturday
+              and several instruments close early on Friday.
+            </p>
+          </div>
+
           <div className="panel">
             <div className="panel-header"><h3>Activity feed</h3></div>
             {(!snap?.feed || snap.feed.length === 0) && <p className="empty">Nothing yet.</p>}

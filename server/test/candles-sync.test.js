@@ -12,8 +12,8 @@ async function migratedWithSymbol(t) {
   await runMigrations({ silent: true });
   await query(
     `INSERT INTO symbols (broker_symbol, digits, point, contract_size, tick_size,
-       tick_value, min_lot, lot_step, max_lot, enabled, synced_at)
-     VALUES ('EURUSD', 5, 0.00001, 100000, 0.00001, 1, 0.01, 0.01, 100, 1, UTC_TIMESTAMP())`
+       tick_value, min_lot, lot_step, max_lot, enabled, synced_at, trade_mode, market_open, market_reason, market_checked_at)
+     VALUES ('EURUSD', 5, 0.00001, 100000, 0.00001, 1, 0.01, 0.01, 100, 1, UTC_TIMESTAMP(), 4, 1, 'open (test fixture)', UTC_TIMESTAMP())`
   );
   const [sym] = await query('SELECT id FROM symbols WHERE broker_symbol = ?', ['EURUSD']);
   return sym.id;

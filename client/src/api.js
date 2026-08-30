@@ -106,6 +106,8 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload)
     }),
+  marketStatus: () => request('/api/symbols/market-status'),
+  refreshMarketStatus: () => request('/api/symbols/market-status/refresh', { method: 'POST' }),
   scannerLive: () => request('/api/scanner/live'),
   startScan: (mode = 'demo') =>
     request('/api/scanner/scan', {

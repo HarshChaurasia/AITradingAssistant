@@ -61,6 +61,11 @@ function createBridgeClient({ baseUrl, token, timeoutMs = 15000 }) {
     health: () => request('/health', undefined, 8000),
     account: () => request('/account', undefined, 8000),
     symbols: () => request('/symbols'),
+    // Is this symbol tradeable right now? Probed per symbol rather than in
+    // bulk: only the watched handful can ever produce a signal, and asking
+    // about all twelve thousand would take minutes.
+    marketStatus: (symbol, staleAfterSeconds) =>
+      request('/symbol/market-status', { symbol, stale_after: staleAfterSeconds }),
     candles: ({ symbol, timeframe = 'H1', count = 500 }) =>
       request('/candles', { symbol, timeframe, count }),
 

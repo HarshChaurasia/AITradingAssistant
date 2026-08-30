@@ -8,6 +8,7 @@ const { ensureBridgeConnected, checkDisk } = require('./health');
 const healthAlerts = require('../alerts/health');
 const { loadOperationsSettings } = require('../settings/operations');
 const { evaluateMissedSignals } = require('../signals/missed');
+const { refreshMarketStatus, watchedSymbols } = require('../market/market-hours');
 
 /**
  * Periodic candle sync followed by signal generation.
@@ -44,6 +45,8 @@ function createScheduler({
   // synced moments earlier, instead of racing the sync.
   scanRunner = null,
   gradeMissedFn = evaluateMissedSignals,
+  refreshMarketStatusFn = refreshMarketStatus,
+  watchedSymbolsFn = watchedSymbols,
   ensureBridgeConnectedFn = ensureBridgeConnected,
   checkDiskFn = checkDisk,
   alerts = healthAlerts,
@@ -74,6 +77,19 @@ function createScheduler({
         note: 'broker link is down; skipping this cycle'
       };
       return lastResult;
+    }
+
+    // Ask the broker which of the watched markets are open, every tick. This
+    // is a cached snapshot rather than a calendar, so it has to be kept fresh:
+    // the risk gate refuses any symbol whose status has gone stale, which is
+    // the right answer for a symbol the broker has stopped answering about.
+    let marketsChecked = 0;
+    try {
+      marketsChecked = (await refreshMarketStatusFn(bridge, {
+        symbols: await watchedSymbolsFn(), logger
+      })).updated;
+    } catch (error) {
+      logger.error(`market status refresh failed: ${error.message}`);
     }
 
     // Candles are synced for watched symbols as well, so the scanner has
@@ -131,7 +147,7 @@ function createScheduler({
       diskFreeGb: disk.freeGb,
       timeframe: activeTimeframe,
       autoTrade: settings.autoTradeEnabled,
-      symbolsSynced, signals, execution, reconciliation, expired, missed
+      symbolsSynced, marketsChecked, signals, execution, reconciliation, expired, missed
     };
     return lastResult;
   }

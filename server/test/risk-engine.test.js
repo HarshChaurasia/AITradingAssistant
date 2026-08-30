@@ -6,10 +6,21 @@ const { freshDatabase } = require('./helpers/db');
 
 const SCRATCH_DB = 'trading_agent_riskengine_test';
 
+// Checked a moment ago and open. These tests are not exercising market hours
+// - the market-hours tests do that - so the fixtures say so plainly rather
+// than leaving the market_open gate to refuse everything.
+const OPEN_NOW = () => ({
+  trade_mode: 4,
+  market_open: 1,
+  market_reason: 'open (test fixture)',
+  market_checked_at: new Date()
+});
+
 const SYMBOL = {
   id: 1, broker_symbol: 'EURUSD', contract_size: 100000,
   min_lot: 0.01, lot_step: 0.01, max_lot: 500,
-  currency_profit: 'USD', currency_margin: 'EUR'
+  currency_profit: 'USD', currency_margin: 'EUR',
+  ...OPEN_NOW()
 };
 
 const GOOD_SIGNAL = { side: 'BUY', entry: 1.1000, sl: 1.0900, tp: 1.1200, symbol_id: 1 };
@@ -241,7 +252,8 @@ test('the real ETHUSD case passes: 1% risk on a wide-enough stop is not over-exp
   const crypto = {
     id: 2, broker_symbol: 'ETHUSD', contract_size: 1,
     min_lot: 0.1, lot_step: 0.1, max_lot: 1000,
-    currency_profit: 'USD', currency_margin: 'USD'
+    currency_profit: 'USD', currency_margin: 'USD',
+    ...OPEN_NOW()
   };
   const signal = { side: 'BUY', entry: 2457, sl: 2447.94, tp: 2470, symbol_id: 2 };
 
@@ -263,7 +275,8 @@ test('a stop so tight it implies an over-leveraged position IS refused', async (
   const crypto = {
     id: 2, broker_symbol: 'ETHUSD', contract_size: 1,
     min_lot: 0.1, lot_step: 0.1, max_lot: 100000,
-    currency_profit: 'USD', currency_margin: 'USD'
+    currency_profit: 'USD', currency_margin: 'USD',
+    ...OPEN_NOW()
   };
   // A one-dollar stop on a 2457 instrument. The risk is still 1%, but it
   // demands 1337 lots - about 3.3m of notional on 133k of equity, 24x.
@@ -306,4 +319,93 @@ test('the exposure cap is configurable', async (t) => {
 
   assert.equal(d.checks.find((c) => c.name === 'notional_exposure').passed, false,
     'a 0.5x cap must reject what a 5x cap allowed');
+});
+
+test('a signal on a market the broker reports shut is refused', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  const symbol = {
+    ...SYMBOL,
+    market_open: 0,
+    market_reason: 'the broker reports the market closed (Market closed)',
+    market_checked_at: new Date()
+  };
+
+  const d = await assessSignal({ signal: GOOD_SIGNAL, symbol, mode: 'demo', balance: 10000 });
+
+  const gate = d.checks.find((c) => c.name === 'market_open');
+  assert.equal(gate.passed, false);
+  assert.match(gate.detail, /market closed/i);
+  assert.equal(d.allowed, false);
+  assert.equal(d.lot, 0, 'a refused signal is never sized');
+});
+
+test('a symbol the broker still accepts is allowed on the same Saturday', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  // BTCUSD on this account trades at the weekend, which is the entire reason
+  // the rule cannot be a hardcoded "no trading on Saturday".
+  const crypto = {
+    id: 3, broker_symbol: 'BTCUSD', contract_size: 1,
+    min_lot: 0.01, lot_step: 0.01, max_lot: 100,
+    currency_profit: 'USD', currency_margin: 'USD',
+    ...OPEN_NOW()
+  };
+  const signal = { side: 'BUY', entry: 60000, sl: 59000, tp: 62000, symbol_id: 3 };
+
+  const d = await assessSignal({
+    signal, symbol: crypto, mode: 'demo', balance: 133765,
+    now: new Date('2026-08-29T12:00:00Z') // a Saturday
+  });
+
+  assert.equal(d.checks.find((c) => c.name === 'market_open').passed, true);
+  assert.equal(d.allowed, true, d.denialReasons.join('; '));
+});
+
+test('a symbol whose status was never checked is refused rather than assumed open', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  const d = await assessSignal({
+    signal: GOOD_SIGNAL,
+    symbol: { ...SYMBOL, market_open: null, market_checked_at: null },
+    mode: 'demo',
+    balance: 10000
+  });
+
+  assert.equal(d.allowed, false);
+  assert.match(d.denialReasons.join(' '), /never been checked/);
+});
+
+test('a stale status refuses even though it last said open', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  // The bridge drops, the row keeps its old "open" flag, and without this the
+  // system would trade on an answer from an hour ago.
+  const d = await assessSignal({
+    signal: GOOD_SIGNAL,
+    symbol: { ...SYMBOL, market_open: 1, market_checked_at: new Date(Date.now() - 3600 * 1000) },
+    mode: 'demo',
+    balance: 10000
+  });
+
+  assert.equal(d.allowed, false);
+  assert.match(d.denialReasons.join(' '), /old/);
+});
+
+test('a backtest is exempt: market hours have no meaning when replaying history', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  const d = await assessSignal({
+    signal: GOOD_SIGNAL,
+    symbol: { ...SYMBOL, market_open: 0, market_checked_at: null },
+    mode: 'backtest',
+    balance: 10000
+  });
+
+  assert.equal(d.checks.find((c) => c.name === 'market_open').passed, true);
 });

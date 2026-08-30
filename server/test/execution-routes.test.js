@@ -27,8 +27,8 @@ async function startApp(t) {
 
   await query(
     `INSERT INTO symbols (broker_symbol, digits, point, contract_size, tick_size,
-       tick_value, min_lot, lot_step, max_lot, enabled, currency_profit, currency_margin, synced_at)
-     VALUES ('XAUUSD', 2, 0.01, 100, 0.01, 1, 0.01, 0.01, 100, 1, 'USD', 'USD', UTC_TIMESTAMP())`
+       tick_value, min_lot, lot_step, max_lot, enabled, currency_profit, currency_margin, synced_at, trade_mode, market_open, market_reason, market_checked_at)
+     VALUES ('XAUUSD', 2, 0.01, 100, 0.01, 1, 0.01, 0.01, 100, 1, 'USD', 'USD', UTC_TIMESTAMP(), 4, 1, 'open (test fixture)', UTC_TIMESTAMP())`
   );
   const [sym] = await query('SELECT id FROM symbols WHERE broker_symbol = ?', ['XAUUSD']);
   const [st] = await query("SELECT id FROM strategies WHERE name = 'trend-breakout'");
