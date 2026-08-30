@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import EquityCurve from '../components/EquityCurve';
+import SymbolSelect from '../components/SymbolSelect';
 import { api } from '../api';
 
 const TIMEFRAMES = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
@@ -41,6 +42,7 @@ export default function Backtests() {
   const [spread, setSpread] = useState(0.0002);
   const [commission, setCommission] = useState(7);
   const [result, setResult] = useState(null);
+  const [sweepResult, setSweepResult] = useState(null);
   const [runs, setRuns] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -83,6 +85,37 @@ export default function Backtests() {
     }
   }
 
+  /**
+   * Every strategy against every timeframe for one symbol.
+   *
+   * Running one combination at a time invites picking the best of sixty and
+   * calling it an edge, so this reports the whole grid - failures included.
+   * A timeframe with no stored history is backfilled rather than skipped.
+   */
+  async function runSweep() {
+    setBusy(true);
+    setError(null);
+    setSweepResult(null);
+    try {
+      const payload = {
+        symbolId,
+        timeframes: TIMEFRAMES,
+        options: {
+          startingBalance: Number(balance),
+          riskPctPerTrade: Number(riskPct),
+          spreadPrice: Number(spread),
+          commissionPerLot: Number(commission)
+        }
+      };
+      setSweepResult(await api.sweepBacktests(payload));
+      setRuns(await api.backtests());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -97,10 +130,7 @@ export default function Backtests() {
           ))}
         </select>
 
-        <select value={symbolId ?? ''} onChange={(e) => setSymbolId(Number(e.target.value))}>
-          {symbols.length === 0 && <option value="">no symbols — sync first</option>}
-          {symbols.map((s) => <option key={s.id} value={s.id}>{s.broker_symbol}</option>)}
-        </select>
+        <SymbolSelect symbols={symbols} value={symbolId} onChange={setSymbolId} />
 
         <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
           {TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
@@ -122,7 +152,18 @@ export default function Backtests() {
         <button disabled={busy || !strategyName || !symbolId} onClick={run}>
           {busy ? 'Running…' : 'Run backtest'}
         </button>
+
+        <button disabled={busy || !symbolId} onClick={runSweep}>
+          {busy ? 'Sweeping…' : 'Sweep all strategies × all timeframes'}
+        </button>
       </div>
+
+      <p className="muted">
+        A timeframe with no stored candles is backfilled from the broker rather than reported as a
+        failure — that is what &quot;no candles stored, backfill first&quot; used to mean. A sweep is
+        sequential on purpose: firing six concurrent history requests at one MT5 terminal is how the
+        bridge stops answering.
+      </p>
 
       {error && <p className="error">{error}</p>}
 
@@ -148,6 +189,51 @@ export default function Backtests() {
 
           <h4>Equity curve — full period</h4>
           <EquityCurve equity={result.metrics.equityCurve} />
+        </>
+      )}
+
+      {sweepResult && (
+        <>
+          <div className={sweepResult.passed > 0 ? 'verdict pass' : 'verdict fail'}>
+            <strong>{sweepResult.passed} of {sweepResult.combinations} passed</strong>
+            <span>
+              {sweepResult.failed} failed the thresholds, {sweepResult.errored} could not run.
+              Judged on out-of-sample data only.
+            </span>
+          </div>
+
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Strategy</th><th>TF</th><th>Trades</th><th>PF</th><th>Net</th>
+                <th>Max DD</th><th>Bars</th><th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...sweepResult.results]
+                .sort((a, b) => (b.ok && b.passed ? 1 : 0) - (a.ok && a.passed ? 1 : 0)
+                  || ((b.outOfSample?.profitFactor ?? 0) - (a.outOfSample?.profitFactor ?? 0)))
+                .map((r) => (
+                  <tr key={`${r.strategyName}-${r.timeframe}`}>
+                    <td>{r.strategyName}</td>
+                    <td>{r.timeframe}</td>
+                    <td>{r.ok ? r.outOfSample.trades : '—'}</td>
+                    <td>{r.ok ? fmt(r.outOfSample.profitFactor) : '—'}</td>
+                    <td className={r.ok && r.outOfSample.netProfit >= 0 ? 'up' : 'down'}>
+                      {r.ok ? fmt(r.outOfSample.netProfit) : '—'}
+                    </td>
+                    <td>{r.ok ? `${fmt(r.outOfSample.maxDrawdownPct, 1)}%` : '—'}</td>
+                    <td className="muted">{r.bars ?? '—'}</td>
+                    <td
+                      className={r.ok && r.passed ? 'up' : 'down'}
+                      title={r.ok ? (r.failures || []).join('; ') : r.error}
+                    >
+                      {r.ok ? (r.passed ? 'PASS' : 'fail') : 'error'}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
         </>
       )}
 

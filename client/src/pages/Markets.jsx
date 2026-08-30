@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import CandleChart from '../components/CandleChart';
+import SymbolSelect from '../components/SymbolSelect';
 import { api } from '../api';
 
 const TIMEFRAMES = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
@@ -53,15 +54,7 @@ export default function Markets() {
       </div>
 
       <div className="toolbar">
-        <select value={symbolId ?? ''} onChange={(e) => setSymbolId(Number(e.target.value))}>
-          {symbols.length === 0 && <option value="">no symbols — sync first</option>}
-          {symbols.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.broker_symbol}
-              {s.enabled ? ' ●' : ''}
-            </option>
-          ))}
-        </select>
+        <SymbolSelect symbols={symbols} value={symbolId} onChange={setSymbolId} />
 
         <div className="tf-group">
           {TIMEFRAMES.map((tf) => (

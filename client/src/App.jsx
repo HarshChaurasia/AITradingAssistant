@@ -7,6 +7,9 @@ import Trades from './pages/Trades';
 import Login from './pages/Login';
 import Scanner from './pages/Scanner';
 import Performance from './pages/Performance';
+import Settings from './pages/Settings';
+import Strategies from './pages/Strategies';
+import Missed from './pages/Missed';
 import { api } from './api';
 
 function App() {
@@ -31,9 +34,12 @@ function App() {
           <button className={view === 'markets' ? 'nav active' : 'nav'} onClick={() => setView('markets')}>Markets</button>
           <button className={view === 'scanner' ? 'nav active' : 'nav'} onClick={() => setView('scanner')}>Scanner</button>
           <button className={view === 'signals' ? 'nav active' : 'nav'} onClick={() => setView('signals')}>Signals</button>
+          <button className={view === 'missed' ? 'nav active' : 'nav'} onClick={() => setView('missed')}>Missed signals</button>
+          <button className={view === 'strategies' ? 'nav active' : 'nav'} onClick={() => setView('strategies')}>Strategies</button>
           <button className={view === 'backtests' ? 'nav active' : 'nav'} onClick={() => setView('backtests')}>Backtests</button>
           <button className={view === 'execution' ? 'nav active' : 'nav'} onClick={() => setView('execution')}>Execution</button>
           <button className={view === 'risk' ? 'nav active' : 'nav'} onClick={() => setView('risk')}>Risk</button>
+          <button className={view === 'settings' ? 'nav active' : 'nav'} onClick={() => setView('settings')}>Settings</button>
         </nav>
       </aside>
 
@@ -55,19 +61,13 @@ function App() {
           : view === 'backtests' ? <Backtests />
           : view === 'scanner' ? <Scanner />
           : view === 'signals' ? <Signals />
+          : view === 'missed' ? <Missed />
+          : view === 'strategies' ? <Strategies />
+          : view === 'settings' ? <Settings />
           : view === 'execution' ? <Trades />
           : view === 'risk' ? <Risk />
           : <Performance />}
       </main>
-    </div>
-  );
-}
-
-function StatCard({ title, value, tone }) {
-  return (
-    <div className={`stat-card ${tone}`}>
-      <span>{title}</span>
-      <strong>{value}</strong>
     </div>
   );
 }

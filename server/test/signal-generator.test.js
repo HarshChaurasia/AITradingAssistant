@@ -116,10 +116,34 @@ test('a disabled symbol produces nothing', async (t) => {
   assert.equal(result.evaluated, 0);
 });
 
-test('demo signals are auto-approved; live signals wait for a human', async (t) => {
+test('with auto-trade off, a green signal waits for a click', async (t) => {
   await seeded(t, { status: 'live' });
   const { generateSignals } = require('../src/signals/generator');
+  const { saveOperationsSettings } = require('../src/settings/operations');
   const { query } = require('../src/db/pool');
+
+  // The default. Handing over the trigger is an explicit choice, so until the
+  // operator makes it every signal queues - in demo exactly as in live.
+  await saveOperationsSettings({ autoTradeEnabled: false });
+  await generateSignals({ mode: 'demo' });
+
+  const signals = await query("SELECT * FROM signals WHERE mode = 'demo' AND status <> 'rejected'");
+  assert.ok(signals.length > 0, 'the fixture must produce a demo candidate');
+  for (const s of signals) {
+    assert.equal(s.status, 'new');
+    assert.equal(s.auto_approved, 0);
+  }
+});
+
+test('with auto-trade on, demo signals are approved and live ones still are not', async (t) => {
+  await seeded(t, { status: 'live' });
+  const { generateSignals } = require('../src/signals/generator');
+  const { saveOperationsSettings } = require('../src/settings/operations');
+  const { query } = require('../src/db/pool');
+
+  // autoTradeLive is a second, separate switch. Turning on auto-trading must
+  // never reach a real account as a side effect.
+  await saveOperationsSettings({ autoTradeEnabled: true, autoTradeLive: false });
 
   await generateSignals({ mode: 'demo' });
   const demoSignals = await query("SELECT * FROM signals WHERE mode = 'demo'");
@@ -135,9 +159,23 @@ test('demo signals are auto-approved; live signals wait for a human', async (t) 
     assert.equal(s.auto_approved, 1, 'demo runs hands-off so the demo period measures the system');
   }
   for (const s of liveSignals.filter((x) => x.status !== 'rejected')) {
-    assert.equal(s.status, 'new', 'live signals queue for approval');
+    assert.equal(s.status, 'new', 'live needs its own switch before it can auto-approve');
     assert.equal(s.auto_approved, 0);
   }
+});
+
+test('autoTradeLive is what lets a live signal approve itself', async (t) => {
+  await seeded(t, { status: 'live' });
+  const { generateSignals } = require('../src/signals/generator');
+  const { saveOperationsSettings } = require('../src/settings/operations');
+  const { query } = require('../src/db/pool');
+
+  await saveOperationsSettings({ autoTradeEnabled: true, autoTradeLive: true });
+  await generateSignals({ mode: 'live' });
+
+  const signals = await query("SELECT * FROM signals WHERE mode = 'live' AND status <> 'rejected'");
+  assert.ok(signals.length > 0);
+  for (const s of signals) assert.equal(s.auto_approved, 1);
 });
 
 test('a signal denied by risk is stored as rejected with its reasons', async (t) => {

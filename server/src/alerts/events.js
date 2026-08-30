@@ -31,4 +31,29 @@ async function alertDailyLossCap({ mode, realized, cap, send = sendAlert, logger
   await safely(send, `Daily loss cap reached on ${mode}: realized ${realized} against a cap of ${cap}. No further trades today.`, logger);
 }
 
-module.exports = { alertKillSwitch, alertOrderFilled, alertOrderFailed, alertDailyLossCap };
+/**
+ * A tradeable setup the scanner found.
+ *
+ * Worded so it can never be mistaken for a fill. The scanner does not trade -
+ * it reports - and a message that reads like an execution would send someone
+ * to their broker looking for a position that is not there.
+ */
+async function alertOpportunity({
+  symbol, side, timeframe, strategy, score, lot, riskAmount, levels, mode,
+  send = sendAlert, logger = console
+}) {
+  const entry = levels?.entry !== undefined ? ` entry ${levels.entry}` : '';
+  const stop = levels?.sl !== undefined ? ` stop ${levels.sl}` : '';
+  const target = levels?.tp !== undefined && levels.tp !== null ? ` target ${levels.tp}` : '';
+  await safely(
+    send,
+    `SETUP (not traded) ${side} ${symbol} ${timeframe} · ${strategy} · score ${score}/100
+` +
+    `${lot} lots risking ${Number(riskAmount || 0).toFixed(2)} on ${mode}.${entry}${stop}${target}`,
+    logger
+  );
+}
+
+module.exports = {
+  alertKillSwitch, alertOrderFilled, alertOrderFailed, alertDailyLossCap, alertOpportunity
+};

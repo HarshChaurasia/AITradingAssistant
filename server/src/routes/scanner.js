@@ -5,9 +5,39 @@ const { query } = require('../db/pool');
 const { getStrategy, mergeParams } = require('../strategies/registry');
 const { getCandles } = require('../market/candles');
 const { executeSignal } = require('../execution/manager');
+const { createScanRunner } = require('../scanner/runner');
 
-function createScannerRouter({ bridge } = {}) {
+function createScannerRouter({ bridge, scanRunner = createScanRunner() } = {}) {
   const router = express.Router();
+
+  /**
+   * The live scanner feed.
+   *
+   * Returns instantly whether or not a scan is in flight: progress while one
+   * runs, the previous result meanwhile. The screen therefore never blanks
+   * out mid-sweep, which is what makes a slow scan readable rather than
+   * alarming.
+   */
+  router.get('/scanner/live', (req, res) => {
+    res.json(scanRunner.snapshot());
+  });
+
+  /**
+   * Kick off a sweep. Returns immediately - the result arrives through
+   * /scanner/live. A second request while one is running is answered, not
+   * queued: two concurrent sweeps would fight over the same MT5 terminal.
+   */
+  router.post('/scanner/scan', (req, res) => {
+    if (scanRunner.isScanning()) {
+      return res.status(202).json({ started: false, reason: 'a scan is already running' });
+    }
+    const mode = String(req.body?.mode || process.env.TRADING_MODE || 'demo');
+    scanRunner.scan({ mode }).catch(() => {
+      // The runner records its own failures in the feed; a rejected promise
+      // here must not take the process down.
+    });
+    res.status(202).json({ started: true });
+  });
 
   router.get('/scanner', async (req, res, next) => {
     try {

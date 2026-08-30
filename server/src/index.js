@@ -45,13 +45,21 @@ app.use('/api', createMarketRouter({ bridge: bridgeFromEnv() }));
 
 const { createBacktestRouter } = require('./routes/backtests');
 
-app.use('/api', createBacktestRouter());
+// The bridge is handed in so a backtest on a timeframe with no stored history
+// can backfill it instead of failing with "backfill first".
+app.use('/api', createBacktestRouter({ bridge: bridgeFromEnv() }));
 
 const { createSignalRouter } = require('./routes/signals');
 const { createRiskRouter } = require('./routes/risk');
 const { createScheduler } = require('./scheduler');
 
-const scheduler = createScheduler({ bridge: bridgeFromEnv() });
+const { createScanRunner } = require('./scanner/runner');
+
+// One runner, shared: the scheduler drives it after each candle sync and the
+// scanner routes read its snapshot. Two instances would show the dashboard a
+// different scan from the one that sends the alerts.
+const scanRunner = createScanRunner();
+const scheduler = createScheduler({ bridge: bridgeFromEnv(), scanRunner });
 
 app.use('/api', createSignalRouter());
 app.use('/api', createRiskRouter({ scheduler }));
@@ -66,7 +74,11 @@ app.use('/api', createAiRouter());
 
 const { createScannerRouter } = require('./routes/scanner');
 
-app.use('/api', createScannerRouter({ bridge: bridgeFromEnv() }));
+app.use('/api', createScannerRouter({ bridge: bridgeFromEnv(), scanRunner }));
+
+const { createSettingsRouter } = require('./routes/settings');
+
+app.use('/api', createSettingsRouter());
 
 // Opt-in: an unattended loop should never start just because the server did.
 if (process.env.SCHEDULER_ENABLED === 'true') {

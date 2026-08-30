@@ -2,6 +2,7 @@ const { query } = require('../db/pool');
 const { getCandles } = require('../market/candles');
 const { getStrategy, mergeParams } = require('../strategies/registry');
 const { assessSignal } = require('../risk/engine');
+const { loadOperationsSettings } = require('../settings/operations');
 
 const DEFAULT_TIMEFRAME = 'H1';
 const HISTORY_BARS = 500;
@@ -21,7 +22,19 @@ async function countOpenPositions(mode) {
  * of the strategy contract: if live and backtest ever run different code, the
  * demo period measures nothing about the strategy.
  */
-async function generateSignals({ mode = 'demo', now = new Date(), timeframe = DEFAULT_TIMEFRAME } = {}) {
+async function generateSignals({
+  mode = 'demo',
+  now = new Date(),
+  timeframe = DEFAULT_TIMEFRAME,
+  settings = null
+} = {}) {
+  const ops = settings || (await loadOperationsSettings());
+
+  // Auto-approval is the operator's switch, not the mode's. With it off a
+  // signal waits as `new` for a click; the execution path is identical either
+  // way, so an approved signal behaves exactly like an auto-approved one.
+  const autoApprove = ops.autoTradeEnabled && (mode !== 'live' || ops.autoTradeLive);
+
   const strategies = await query('SELECT * FROM strategies WHERE enabled = 1');
   const symbols = await query('SELECT * FROM symbols WHERE enabled = 1');
 
@@ -65,10 +78,8 @@ async function generateSignals({ mode = 'demo', now = new Date(), timeframe = DE
         now
       });
 
-      // Demo runs hands-off so the two week demo measures the system rather
-      // than the operator's reflexes. Live queues for a click.
-      const status = decision.allowed ? (mode === 'demo' ? 'approved' : 'new') : 'rejected';
-      const autoApproved = decision.allowed && mode === 'demo' ? 1 : 0;
+      const status = decision.allowed ? (autoApprove ? 'approved' : 'new') : 'rejected';
+      const autoApproved = decision.allowed && autoApprove ? 1 : 0;
 
       const result = await query(
         `INSERT IGNORE INTO signals
@@ -94,7 +105,7 @@ async function generateSignals({ mode = 'demo', now = new Date(), timeframe = DE
     }
   }
 
-  return { evaluated, created, skipped };
+  return { evaluated, created, skipped, autoApprove };
 }
 
 module.exports = { generateSignals, countOpenPositions };

@@ -1,5 +1,5 @@
 const { query } = require('../db/pool');
-const { getCandles } = require('../market/candles');
+const { getCandles, syncCandles } = require('../market/candles');
 const { getStrategy, mergeParams } = require('../strategies/registry');
 const { runBacktest } = require('./engine');
 const { computeMetrics } = require('./metrics');
@@ -60,7 +60,38 @@ function toMysqlDateTime(isoString) {
   return isoString.slice(0, 19).replace('T', ' ');
 }
 
-async function executeRun({ strategyName, symbolId, timeframe = 'H1', params = {}, options = {} }) {
+/**
+ * Pull history for a symbol/timeframe that has none stored.
+ *
+ * "Backtest is failing" almost always means this: the dashboard offers every
+ * timeframe, the scheduler only ever syncs one, and the other five have an
+ * empty candle table. Rather than telling the operator to go and press
+ * Backfill on another screen, fetch it here - but only when a broker
+ * connection was actually handed in, and never silently on a symbol that has
+ * partial history, which would paper over a gap.
+ */
+async function backfillIfEmpty({ bridge, symbol, timeframe, bars }) {
+  if (!bridge) return { attempted: false, reason: 'no broker bridge available' };
+  try {
+    const result = await syncCandles(bridge, {
+      symbolId: symbol.id,
+      brokerSymbol: symbol.broker_symbol,
+      timeframe,
+      count: bars
+    });
+    return { attempted: true, ...result };
+  } catch (error) {
+    return { attempted: true, error: error.message };
+  }
+}
+
+async function executeRun({
+  strategyName, symbolId, timeframe = 'H1', params = {}, options = {},
+  // Optional. When present, a missing candle store is filled rather than
+  // being reported back as a failure the operator has to go and fix.
+  bridge = null,
+  backfillBars = 2000
+}) {
   // Resolve the strategy first: an unknown name should fail before any query.
   const strategy = getStrategy(strategyName);
 
@@ -68,9 +99,15 @@ async function executeRun({ strategyName, symbolId, timeframe = 'H1', params = {
   if (symbolRows.length === 0) throw new Error(`unknown symbolId ${symbolId}`);
   const symbol = symbolRows[0];
 
-  const candles = await getCandles({ symbolId, timeframe, limit: 20000 });
+  let candles = await getCandles({ symbolId, timeframe, limit: 20000 });
+  let backfill = null;
   if (candles.length === 0) {
-    throw new Error(`no candles stored for ${symbol.broker_symbol} ${timeframe} — backfill first`);
+    backfill = await backfillIfEmpty({ bridge, symbol, timeframe, bars: backfillBars });
+    candles = await getCandles({ symbolId, timeframe, limit: 20000 });
+  }
+  if (candles.length === 0) {
+    const detail = backfill?.error ? ` (backfill failed: ${backfill.error})` : '';
+    throw new Error(`no candles stored for ${symbol.broker_symbol} ${timeframe} — backfill first${detail}`);
   }
 
   const mergedParams = mergeParams(strategy, params);
@@ -160,7 +197,7 @@ async function executeRun({ strategyName, symbolId, timeframe = 'H1', params = {
     );
   }
 
-  return { runId, metrics, walkForward, passed, failures, thresholds };
+  return { runId, metrics, walkForward, passed, failures, thresholds, backfill, bars: candles.length };
 }
 
 async function listRuns({ limit = 25 } = {}) {
@@ -193,4 +230,56 @@ async function getRun(runId) {
   return { run: runs[0], trades };
 }
 
-module.exports = { executeRun, splitWalkForward, evaluateThresholds, listRuns, getRun };
+/**
+ * Run one symbol across many timeframes and strategies in one request.
+ *
+ * Sequential on purpose: each run can trigger a backfill, and firing six
+ * concurrent history requests at a single MT5 terminal is how the bridge
+ * stops answering. A failure on one combination is recorded and the sweep
+ * carries on - a missing D1 history must not cost the operator the H4 result
+ * they were actually after.
+ */
+async function sweep({
+  symbolId,
+  strategyNames,
+  timeframes,
+  params = {},
+  options = {},
+  bridge = null,
+  backfillBars = 2000
+}) {
+  const results = [];
+
+  for (const strategyName of strategyNames) {
+    for (const timeframe of timeframes) {
+      try {
+        const run = await executeRun({
+          strategyName, symbolId, timeframe, params, options, bridge, backfillBars
+        });
+        results.push({
+          strategyName,
+          timeframe,
+          ok: true,
+          runId: run.runId,
+          passed: run.passed,
+          failures: run.failures,
+          outOfSample: run.walkForward.outOfSample,
+          bars: run.bars
+        });
+      } catch (error) {
+        results.push({ strategyName, timeframe, ok: false, error: error.message });
+      }
+    }
+  }
+
+  return {
+    symbolId,
+    combinations: results.length,
+    passed: results.filter((r) => r.ok && r.passed).length,
+    failed: results.filter((r) => r.ok && !r.passed).length,
+    errored: results.filter((r) => !r.ok).length,
+    results
+  };
+}
+
+module.exports = { executeRun, sweep, splitWalkForward, evaluateThresholds, listRuns, getRun };

@@ -8,10 +8,18 @@ function fakeBridge() {
   return { candles: async () => ({ server_utc_offset_seconds: 0, candles: [] }) };
 }
 
+// The scheduler re-reads the operator's settings every tick. These tests drive
+// it without a database, so the read is stubbed rather than mocked away - the
+// timeframe and expiry it returns are the ones the assertions below expect.
+const { DEFAULT_OPERATIONS_SETTINGS } = require('../src/settings/operations');
+const fakeSettings = async (overrides = {}) => ({ ...DEFAULT_OPERATIONS_SETTINGS, ...overrides });
+
 test('runOnce reports what each phase did', async () => {
   const calls = [];
   const scheduler = createScheduler({
     bridge: fakeBridge(),
+    loadSettingsFn: fakeSettings,
+    gradeMissedFn: async () => ({ examined: 0, graded: 0, pending: 0 }),
     syncCandlesFn: async () => { calls.push('sync'); return { received: 5, stored: 5 }; },
     listSymbolsFn: async () => [{ id: 1, broker_symbol: 'EURUSD' }],
     generateSignalsFn: async () => { calls.push('generate'); return { evaluated: 1, created: 1, skipped: 0 }; },
@@ -38,6 +46,8 @@ test('ticks never overlap', async () => {
 
   const scheduler = createScheduler({
     bridge: fakeBridge(),
+    loadSettingsFn: fakeSettings,
+    gradeMissedFn: async () => ({ examined: 0, graded: 0, pending: 0 }),
     intervalMs: 10,
     syncCandlesFn: async () => {
       active += 1;
@@ -66,6 +76,8 @@ test('a failing tick is contained and the scheduler keeps running', async () => 
   let ticks = 0;
   const scheduler = createScheduler({
     bridge: fakeBridge(),
+    loadSettingsFn: fakeSettings,
+    gradeMissedFn: async () => ({ examined: 0, graded: 0, pending: 0 }),
     intervalMs: 10,
     syncCandlesFn: async () => { ticks += 1; throw new Error('bridge is down'); },
     listSymbolsFn: async () => [{ id: 1, broker_symbol: 'EURUSD' }],
@@ -90,6 +102,8 @@ test('stop halts the schedule and isRunning reflects it', async () => {
   let ticks = 0;
   const scheduler = createScheduler({
     bridge: fakeBridge(),
+    loadSettingsFn: fakeSettings,
+    gradeMissedFn: async () => ({ examined: 0, graded: 0, pending: 0 }),
     intervalMs: 10,
     syncCandlesFn: async () => { ticks += 1; return { received: 0, stored: 0 }; },
     listSymbolsFn: async () => [{ id: 1, broker_symbol: 'EURUSD' }],
@@ -117,6 +131,8 @@ test('stop halts the schedule and isRunning reflects it', async () => {
 test('start is idempotent', async () => {
   const scheduler = createScheduler({
     bridge: fakeBridge(),
+    loadSettingsFn: fakeSettings,
+    gradeMissedFn: async () => ({ examined: 0, graded: 0, pending: 0 }),
     intervalMs: 10,
     syncCandlesFn: async () => ({ received: 0, stored: 0 }),
     listSymbolsFn: async () => [],
@@ -139,6 +155,8 @@ test('execution runs only when explicitly enabled', async () => {
   const calls = [];
   const base = {
     bridge: fakeBridge(),
+    loadSettingsFn: fakeSettings,
+    gradeMissedFn: async () => ({ examined: 0, graded: 0, pending: 0 }),
     syncCandlesFn: async () => ({ received: 0, stored: 0 }),
     listSymbolsFn: async () => [],
     generateSignalsFn: async () => ({ evaluated: 0, created: 0, skipped: 0 }),
@@ -164,6 +182,8 @@ test('a down broker link skips the cycle rather than trading blind', async () =>
   const touched = [];
   const scheduler = createScheduler({
     bridge: fakeBridge(),
+    loadSettingsFn: fakeSettings,
+    gradeMissedFn: async () => ({ examined: 0, graded: 0, pending: 0 }),
     ensureBridgeConnectedFn: async () => ({ connected: false, reconnected: false }),
     checkDiskFn: async () => ({ freeGb: 100 }),
     syncCandlesFn: async () => { touched.push('sync'); return { received: 0, stored: 0 }; },
@@ -183,6 +203,8 @@ test('a down broker link skips the cycle rather than trading blind', async () =>
 test('the tick reports free disk so an unattended run can be watched', async () => {
   const scheduler = createScheduler({
     bridge: fakeBridge(),
+    loadSettingsFn: fakeSettings,
+    gradeMissedFn: async () => ({ examined: 0, graded: 0, pending: 0 }),
     ensureBridgeConnectedFn: async () => ({ connected: true, reconnected: false }),
     checkDiskFn: async () => ({ freeGb: 42.5 }),
     syncCandlesFn: async () => ({ received: 0, stored: 0 }),

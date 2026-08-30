@@ -1,7 +1,11 @@
 const { query } = require('../db/pool');
 
 const SELECT = `
-  SELECT sig.*, st.name AS strategy_name, st.status AS strategy_status, sym.broker_symbol
+  SELECT sig.*, st.name AS strategy_name, st.status AS strategy_status,
+         sym.broker_symbol,
+         -- The instrument's own precision. Rendering EURUSD at 2dp gives 1.16
+         -- for every price it will ever have.
+         sym.digits
     FROM signals sig
     JOIN strategies st ON st.id = sig.strategy_id
     JOIN symbols   sym ON sym.id = sig.symbol_id

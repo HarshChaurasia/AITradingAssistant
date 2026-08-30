@@ -106,6 +106,36 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload)
     }),
+  scannerLive: () => request('/api/scanner/live'),
+  startScan: (mode = 'demo') =>
+    request('/api/scanner/scan', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode })
+    }),
+  settings: () => request('/api/settings'),
+  saveSettings: (patch) =>
+    request('/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch)
+    }),
+  strategyAnalytics: (mode = 'demo') => request(`/api/strategies/analytics?mode=${mode}`),
+  patchStrategy: (id, patch) =>
+    request(`/api/strategies/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch)
+    }),
+  sweepBacktests: (payload) =>
+    request('/api/backtests/sweep', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }),
+  missed: (mode = 'demo', verdict = '') =>
+    request(`/api/missed?mode=${mode}${verdict ? `&verdict=${verdict}` : ''}`),
+  evaluateMissed: () => request('/api/missed/evaluate', { method: 'POST' }),
   syncCandles: (symbolId, timeframe, count = 2000) =>
     request('/api/candles/sync', {
       method: 'POST',

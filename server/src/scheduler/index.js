@@ -6,6 +6,8 @@ const { executeApprovedSignals } = require('../execution/manager');
 const { reconcile } = require('../execution/reconciler');
 const { ensureBridgeConnected, checkDisk } = require('./health');
 const healthAlerts = require('../alerts/health');
+const { loadOperationsSettings } = require('../settings/operations');
+const { evaluateMissedSignals } = require('../signals/missed');
 
 /**
  * Periodic candle sync followed by signal generation.
@@ -22,7 +24,9 @@ function createScheduler({
   mode = process.env.TRADING_MODE || 'demo',
   // The timeframe the strategy was validated on. Trading a timeframe the
   // backtest never covered is running an unvalidated strategy.
-  timeframe = process.env.STRATEGY_TIMEFRAME || 'H1',
+  // An explicit override wins; otherwise the operator's saved setting decides,
+  // re-read every tick so a dashboard change lands without a restart.
+  timeframe = null,
   syncCandlesFn = syncCandles,
   listSymbolsFn = listSymbols,
   generateSignalsFn = generateSignals,
@@ -34,6 +38,12 @@ function createScheduler({
   // until this is explicitly enabled.
   executionEnabled = process.env.EXECUTION_ENABLED === 'true',
   balance = Number(process.env.ACCOUNT_BALANCE_HINT || 10000),
+  loadSettingsFn = loadOperationsSettings,
+  // The live scanner sweeps in the background. Kicking it from here rather
+  // than on its own timer means it always runs against candles that were
+  // synced moments earlier, instead of racing the sync.
+  scanRunner = null,
+  gradeMissedFn = evaluateMissedSignals,
   ensureBridgeConnectedFn = ensureBridgeConnected,
   checkDiskFn = checkDisk,
   alerts = healthAlerts,
@@ -46,6 +56,9 @@ function createScheduler({
   const health = { bridgeDown: false, lowDisk: false };
 
   async function runOnce() {
+    const settings = await loadSettingsFn();
+    const activeTimeframe = timeframe || settings.tradedTimeframe;
+
     // Before anything else: is the broker link alive? A dropped MT5
     // connection never recovers on its own - the bridge cannot retry from
     // inside a request without freezing itself - so the retry happens here.
@@ -57,6 +70,7 @@ function createScheduler({
         at: new Date().toISOString(),
         bridgeDown: true,
         diskFreeGb: disk.freeGb,
+        timeframe: activeTimeframe,
         note: 'broker link is down; skipping this cycle'
       };
       return lastResult;
@@ -72,13 +86,13 @@ function createScheduler({
       await syncCandlesFn(bridge, {
         symbolId: symbol.id,
         brokerSymbol: symbol.broker_symbol,
-        timeframe,
+        timeframe: activeTimeframe,
         count: 300
       });
       symbolsSynced += 1;
     }
 
-    const signals = await generateSignalsFn({ mode, timeframe });
+    const signals = await generateSignalsFn({ mode, timeframe: activeTimeframe, settings });
 
     // Execute before reconciling: a fill from this tick is then picked up by
     // the next one, rather than being reconciled against a broker that has
@@ -88,13 +102,36 @@ function createScheduler({
       : { attempted: 0, filled: 0, skipped: 0, failed: 0, disabled: true };
 
     const reconciliation = await reconcileFn({ bridge, mode });
-    const expired = await expireStaleSignalsFn({ olderThanMinutes: 60, mode });
+    const expired = await expireStaleSignalsFn({
+      olderThanMinutes: settings.signalExpiryMinutes, mode
+    });
+
+    // Grade the setups we refused against the candles that have arrived since.
+    // Cheap - it only touches signals with no verdict yet - and it is the only
+    // thing that turns a rejection into something we can learn from.
+    let missed = null;
+    try {
+      missed = await gradeMissedFn({ modes: [mode] });
+    } catch (error) {
+      logger.error(`missed-signal grading failed: ${error.message}`);
+      missed = { error: error.message };
+    }
+
+    if (scanRunner && !scanRunner.isScanning()) {
+      // Deliberately not awaited: a full sweep can outlast the tick interval,
+      // and the runner has its own guard against overlapping scans.
+      scanRunner.scan({ mode }).catch((error) => {
+        logger.error(`background scan failed: ${error.message}`);
+      });
+    }
 
     lastResult = {
       at: new Date().toISOString(),
       bridgeDown: false,
       diskFreeGb: disk.freeGb,
-      symbolsSynced, signals, execution, reconciliation, expired
+      timeframe: activeTimeframe,
+      autoTrade: settings.autoTradeEnabled,
+      symbolsSynced, signals, execution, reconciliation, expired, missed
     };
     return lastResult;
   }
