@@ -1,10 +1,55 @@
 # Trading Agent Dashboard
 
-A local-first trading system: ingests MT5 market data, validates strategies by
-backtest, gates every trade through a risk engine, and executes on MetaTrader 5.
+A local-first trading system, and an agent that answers the one question the
+system exists for: **does this strategy have an edge after costs?**
 
-It exists to answer one question honestly: **does this strategy have an edge
-after costs?**
+## Who has this problem
+
+A retail trader with a strategy and a broker account. They have a rule that
+looks good on a chart and they are about to fund it.
+
+## The bottleneck
+
+Deciding whether a strategy is worth real money is not a charting problem, it
+is an evidence problem, and almost every way of getting it wrong looks like
+success at the time:
+
+- **In-sample results describe the past.** Parameters chosen by looking at a
+  stretch of history will always flatter themselves on that same stretch.
+- **Costs are not a rounding error.** Spread, slippage and commission are
+  charged on every round turn. A strategy can be right about direction and
+  still drain the account, and the equity curve looks fine right up until it is
+  measured with costs charged.
+- **A good number at one setting is usually luck.** If a 20-bar channel wins
+  and 18 and 22 lose, what was found was a coincidence.
+
+Getting this wrong is expensive and slow: the trader funds the account, trades
+for two months, and learns the answer from their balance. Getting it right by
+hand means a careful walk-forward split, a cost model, and a parameter
+sensitivity check - per strategy, per instrument, every time.
+
+## What is here
+
+| | |
+| --- | --- |
+| `eval/agent/` | The validation agent: measures through the backtest engine and must clear a verifier before it may answer |
+| `eval/` | Sixteen synthetic cases whose correct answer is known by construction, plus the baseline it is compared against |
+| `server/`, `client/`, `bridge/` | The trading system itself: MT5 ingestion, backtests, risk gates, execution, dashboard |
+
+**Results, reproduction and the improvement changelog:**
+
+- [docs/REPRODUCTION.md](docs/REPRODUCTION.md) - run it from a clean machine
+- [IMPROVEMENT-CHANGELOG.md](IMPROVEMENT-CHANGELOG.md) - how the solution got better, and what was removed
+- `eval/results/latest.md` - the most recent measured comparison
+
+The graded result needs Node and one API key. It does **not** need MetaTrader,
+a broker account or MySQL - the price series are generated from fixed seeds
+inside the repo.
+
+## The trading system
+
+It ingests MT5 market data, validates strategies by backtest, gates every trade
+through a risk engine, and executes on MetaTrader 5.
 
 ## Requirements
 
@@ -67,5 +112,7 @@ rounded up**, and **the kill switch only ever resets by hand**.
 
 ## Testing
 
-    npm --prefix server test    # needs the Docker MySQL running
+    npm run eval:test           # agent harness, offline and free
+    npm run eval:cases          # re-proves the eval set's ground truth
+    npm --prefix server test    # trading system; needs the Docker MySQL running
     npm run build
