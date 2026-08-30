@@ -3,6 +3,10 @@
 A local-first trading system, and an agent that answers the one question the
 system exists for: **does this strategy have an edge after costs?**
 
+> **Judging this for the hackathon?** [SUBMISSION.md](SUBMISSION.md) indexes
+> every deliverable and criterion. Three commands verify it; two need no API
+> key and no network.
+
 ## Who has this problem
 
 A retail trader with a strategy and a broker account. They have a rule that
