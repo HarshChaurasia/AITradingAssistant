@@ -25,13 +25,16 @@ async function liveByStrategyTimeframe({ mode = 'demo' } = {}) {
   const rows = await query(
     `SELECT st.name          AS strategy,
             sig.timeframe    AS timeframe,
-            COUNT(*)                                                  AS signals,
-            SUM(sig.status = 'rejected')                              AS rejected,
-            SUM(t.id IS NOT NULL)                                     AS tradesOpened,
-            SUM(t.status = 'CLOSED')                                  AS tradesClosed,
-            SUM(t.status = 'OPEN')                                    AS tradesOpen,
-            SUM(t.status = 'CLOSED' AND t.pnl > 0)                    AS wins,
-            SUM(t.status = 'CLOSED' AND t.pnl <= 0)                   AS losses,
+            -- DISTINCT because the joins below fan out: one signal with 278
+            -- cancelled retry rows counted as 278 signals, which is how a
+            -- timeframe with two signals reported 279.
+            COUNT(DISTINCT sig.id)                                    AS signals,
+            COUNT(DISTINCT CASE WHEN sig.status = 'rejected' THEN sig.id END) AS rejected,
+            COUNT(DISTINCT CASE WHEN t.status <> 'CANCELLED' THEN t.id END) AS tradesOpened,
+            COUNT(DISTINCT CASE WHEN t.status = 'CLOSED' THEN t.id END)     AS tradesClosed,
+            COUNT(DISTINCT CASE WHEN t.status = 'OPEN' THEN t.id END)       AS tradesOpen,
+            COUNT(DISTINCT CASE WHEN t.status = 'CLOSED' AND t.pnl > 0 THEN t.id END)  AS wins,
+            COUNT(DISTINCT CASE WHEN t.status = 'CLOSED' AND t.pnl <= 0 THEN t.id END) AS losses,
             COALESCE(SUM(CASE WHEN t.status = 'CLOSED' THEN t.pnl END), 0) AS pnl,
             COALESCE(SUM(CASE WHEN t.status = 'CLOSED' AND t.pnl > 0 THEN t.pnl END), 0)  AS grossWin,
             COALESCE(SUM(CASE WHEN t.status = 'CLOSED' AND t.pnl <= 0 THEN t.pnl END), 0) AS grossLoss,
@@ -39,8 +42,8 @@ async function liveByStrategyTimeframe({ mode = 'demo' } = {}) {
             MIN(CASE WHEN t.status = 'CLOSED' THEN t.pnl END)          AS worstTrade,
             -- Refusals the missed-signal grader has since judged. This is the
             -- only measure there is of a signal the system never acted on.
-            SUM(o.verdict = 'costly')                                  AS refusedButWorked,
-            SUM(o.verdict = 'correct')                                 AS refusedRightly
+            COUNT(DISTINCT CASE WHEN o.verdict = 'costly' THEN sig.id END)  AS refusedButWorked,
+            COUNT(DISTINCT CASE WHEN o.verdict = 'correct' THEN sig.id END) AS refusedRightly
        FROM signals sig
        JOIN strategies st ON st.id = sig.strategy_id
        LEFT JOIN trades t ON t.signal_id = sig.id AND t.mode = sig.mode

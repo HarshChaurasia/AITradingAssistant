@@ -272,8 +272,15 @@ export default function Settings() {
         />
         <NumberField
           label="Max concurrent positions"
+          hint="Across the whole account."
           value={risk.maxConcurrentPositions}
           onChange={(v) => setRisk({ ...risk, maxConcurrentPositions: v })}
+        />
+        <NumberField
+          label="Max positions per symbol"
+          hint="Six strategies across five timeframes read the same candles, so a real move fires most of them at once and they arrive as near-identical orders seconds apart. Without this, that is one idea expressed five times at five times the risk."
+          value={risk.maxPositionsPerSymbol}
+          onChange={(v) => setRisk({ ...risk, maxPositionsPerSymbol: v })}
         />
         <NumberField
           label="Consecutive loss limit"

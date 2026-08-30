@@ -37,6 +37,21 @@ async function newsConflict({ symbol, now, blackoutMinutes }) {
   return rows[0] || null;
 }
 
+/**
+ * Open positions in one instrument, counted from the journal.
+ *
+ * Counted per symbol rather than per strategy on purpose: the account's
+ * exposure does not care which strategy had the idea.
+ */
+async function openPositionsForSymbol({ symbolId, mode }) {
+  const rows = await query(
+    `SELECT COUNT(*) AS n FROM trades
+      WHERE mode = ? AND symbol_id = ? AND status IN ('OPEN', 'PENDING')`,
+    [mode, symbolId]
+  );
+  return Number(rows[0].n);
+}
+
 async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, now = new Date() }) {
   const settings = await loadRiskSettings();
   const day = currentTradingDay(now);
@@ -99,14 +114,28 @@ async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, 
     add('market_open', market.open, market.reason);
   }
 
-  // 8. Position size.
+  // 8. How much of this one instrument is already open?
+  //
+  // Six strategies over five timeframes read the same candles, so a real move
+  // fires most of them at once and they arrive as near-identical orders
+  // seconds apart. Without this gate that is one idea expressed five times,
+  // at five times the risk, on a single instrument.
+  const perSymbolLimit = settings.maxPositionsPerSymbol;
+  const sameSymbolOpen = mode === 'backtest'
+    ? 0
+    : await openPositionsForSymbol({ symbolId: symbol.id, mode });
+  const symbolAtCap = sameSymbolOpen >= perSymbolLimit;
+  add('positions_per_symbol', !symbolAtCap,
+    `${sameSymbolOpen} open on ${symbol.broker_symbol}, limit ${perSymbolLimit}`);
+
+  // 9. Position size.
   const sized = hasStop
     ? sizePosition({ balance, riskPct: settings.riskPctPerTrade, entry: signal.entry, sl: signal.sl, symbol })
     : { lot: 0, riskAmount: 0, stopDistance: 0, rejected: true, reason: 'no stop loss on the signal' };
   add('position_size', !sized.rejected,
     sized.rejected ? sized.reason : `${sized.lot} lots risking ${sized.riskAmount.toFixed(2)}`);
 
-  // 9. Notional exposure. Risk percentage alone does not bound position size:
+  // 10. Notional exposure. Risk percentage alone does not bound position size:
   // the tighter the stop, the larger the position for the same 1% risk. This
   // caps what that can grow into.
   const notional = sized.rejected ? 0 : sized.lot * Number(symbol.contract_size) * Number(signal.entry);

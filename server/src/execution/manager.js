@@ -30,7 +30,54 @@ async function loadApprovedSignals(mode) {
   );
 }
 
-async function executeSignal({ bridge, signal, mode, balance }) {
+// How many times a signal may be sent before it is abandoned. One failed
+// send is a rejected order; a hundred is a loop. A EURUSD H4 signal retried
+// 278 times over four and a half hours before anything stopped it.
+const MAX_SEND_ATTEMPTS = 3;
+
+/**
+ * Claim a signal for execution.
+ *
+ * The UPDATE is the lock: only the caller whose statement actually matched a
+ * row may send an order. Two scheduler ticks, a manual run and a Trade-now
+ * click can all reach the same signal at once, and exactly one of them wins.
+ * Without this there was nothing at all preventing a second execution.
+ */
+async function claimSignal(signalId) {
+  const result = await query(
+    `UPDATE signals
+        SET status = 'executing', send_attempts = send_attempts + 1
+      WHERE id = ? AND status = 'approved'`,
+    [signalId]
+  );
+  return result.affectedRows === 1;
+}
+
+async function releaseSignal(signalId, { status, reason }) {
+  await query(
+    `UPDATE signals
+        SET status = ?, decided_at = UTC_TIMESTAMP(), decided_by = 'system',
+            decision = JSON_SET(COALESCE(decision, JSON_OBJECT()), '$.sendOutcome', ?)
+      WHERE id = ?`,
+    [status, String(reason || '').slice(0, 480), signalId]
+  );
+}
+
+async function executeSignal({ bridge, signal, mode, balance, claimed = false }) {
+  // Belt to the claim's braces: a trade row that is not CANCELLED means this
+  // signal has already reached the broker once.
+  const existing = await query(
+    "SELECT id, broker_ticket, status FROM trades WHERE signal_id = ? AND status <> 'CANCELLED'",
+    [signal.id]
+  );
+  if (existing.length > 0) {
+    return {
+      status: 'skipped',
+      reason: `signal ${signal.id} has already been executed (trade ${existing[0].id}, ticket ${existing[0].broker_ticket ?? 'pending'})`,
+      tradeId: existing[0].id
+    };
+  }
+
   const symbolRows = await query('SELECT * FROM symbols WHERE id = ?', [signal.symbol_id]);
   if (symbolRows.length === 0) {
     return { status: 'skipped', reason: `unknown symbolId ${signal.symbol_id}` };
@@ -94,6 +141,13 @@ async function executeSignal({ bridge, signal, mode, balance }) {
         WHERE id = ?`,
       [String(error.message).slice(0, 255), tradeId]
     );
+    // A signal whose send threw is finished unless it has attempts left. It
+    // used to stay 'approved', which is why one of them was retried every
+    // minute for four and a half hours.
+    await releaseSignal(signal.id, {
+      status: signal.send_attempts >= MAX_SEND_ATTEMPTS ? 'rejected' : 'approved',
+      reason: error.message
+    });
     return { status: 'failed', tradeId, reason: error.message };
   }
 
@@ -109,6 +163,10 @@ async function executeSignal({ bridge, signal, mode, balance }) {
       reason: result.comment || 'rejected',
       mode
     }).catch(() => {});
+    await releaseSignal(signal.id, {
+      status: signal.send_attempts >= MAX_SEND_ATTEMPTS ? 'rejected' : 'approved',
+      reason: result.comment || 'the broker rejected the order'
+    });
     return { status: 'failed', tradeId, reason: result.comment || 'the broker rejected the order' };
   }
 
@@ -160,7 +218,26 @@ async function executeApprovedSignals({ bridge, mode = 'demo', balance = 10000 }
   let failed = 0;
 
   for (const signal of signals) {
-    const outcome = await executeSignal({ bridge, signal, mode, balance });
+    // Claim it first. If the UPDATE matched nothing, another worker already
+    // has this signal and sending it here would open a second position.
+    if (!(await claimSignal(signal.id))) {
+      skipped += 1;
+      continue;
+    }
+
+    const outcome = await executeSignal({
+      bridge, signal: { ...signal, send_attempts: signal.send_attempts + 1 }, mode, balance, claimed: true
+    });
+
+    // A claimed signal must never be left in 'executing': the next tick would
+    // skip it for ever and the operator would see a signal that simply stopped.
+    if (outcome.status === 'skipped') {
+      const still = await query("SELECT status FROM signals WHERE id = ?", [signal.id]);
+      if (still[0]?.status === 'executing') {
+        await releaseSignal(signal.id, { status: 'rejected', reason: outcome.reason });
+      }
+    }
+
     if (outcome.status === 'filled') filled += 1;
     else if (outcome.status === 'skipped') skipped += 1;
     else failed += 1;
@@ -169,4 +246,4 @@ async function executeApprovedSignals({ bridge, mode = 'demo', balance = 10000 }
   return { attempted: signals.length, filled, skipped, failed };
 }
 
-module.exports = { executeApprovedSignals, executeSignal };
+module.exports = { claimSignal, releaseSignal, MAX_SEND_ATTEMPTS, executeApprovedSignals, executeSignal };
