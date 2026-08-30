@@ -7,5 +7,8 @@ npm-debug.log*
 bridge/venv/
 logs/
 
+# Bridge cursor state - runtime data, not source
+bridge/offset.json
+
 # PM2 runtime state
 .pm2/

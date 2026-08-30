@@ -12,7 +12,11 @@
     "start": "npm --prefix server run start",
     "server": "npm --prefix server run dev",
     "client": "npm --prefix client run dev",
-    "bridge": "bridge/venv/Scripts/python.exe bridge/app.py"
+    "bridge": "bridge/venv/Scripts/python.exe bridge/app.py",
+    "eval": "node eval/run.js",
+    "eval:cases": "node eval/verify-cases.js",
+    "eval:seeds": "node eval/find-seeds.js",
+    "eval:test": "node --test \"eval/test/**/*.test.js\""
   },
   "devDependencies": {
     "concurrently": "^9.0.1",
