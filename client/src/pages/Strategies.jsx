@@ -59,6 +59,48 @@ export default function Strategies() {
 
       {error && <p className="error">{error}</p>}
 
+      <div className="panel">
+        <div className="panel-header">
+          <h3>Which timeframe is working</h3>
+          <span>every strategy pooled, ranked by expectancy per trade</span>
+        </div>
+        {data.byTimeframe.length === 0 ? (
+          <p className="empty">
+            No signals on any timeframe yet. Pick more than one traded timeframe in Settings and
+            this fills in as they trade.
+          </p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>TF</th><th>Signals</th><th>Rejected</th><th>Closed</th>
+                <th>Wins</th><th>Losses</th><th>Win rate</th><th>Expectancy</th><th>Net P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.byTimeframe.map((t) => (
+                <tr key={t.timeframe}>
+                  <td><strong>{t.timeframe}</strong></td>
+                  <td>{t.signals}</td>
+                  <td className="muted">{t.rejected}</td>
+                  <td>{t.tradesClosed}</td>
+                  <td className="up">{t.wins}</td>
+                  <td className="down">{t.losses}</td>
+                  <td>{t.winRatePct === null ? '—' : `${t.winRatePct}%`}</td>
+                  <td className={(t.expectancy ?? 0) >= 0 ? 'up' : 'down'}>{num(t.expectancy)}</td>
+                  <td className={t.pnl >= 0 ? 'up' : 'down'}>{num(t.pnl)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="muted">
+          Ranked by <strong>expectancy per trade</strong>, not total P&amp;L. Total rewards
+          whichever timeframe simply traded most, which is not the same as the one that traded
+          best — and expectancy is what actually compounds.
+        </p>
+      </div>
+
       <p className="muted">
         <strong>Enabled</strong> is what the signal generator reads. <strong>Status</strong> is the
         promotion ladder the risk engine gates on — enabling a <code>draft</code> strategy produces
@@ -66,16 +108,44 @@ export default function Strategies() {
         promoting anything.
       </p>
 
-      {data.strategies.map((s) => (
+      {[...data.strategies].sort((a, b) => a.rank - b.rank).map((s) => (
         <div key={s.id} className="panel">
           <div className="panel-header">
             <h3>
+              <span className="rank">#{s.rank}</span>
               {s.name} <small className="muted">v{s.version}</small>
               {s.backtests.passed > 0 && <span className="evidence-tag">{s.backtests.passed} passed</span>}
             </h3>
             <span>
               {s.totals.tradesClosed} closed · {s.totals.tradesOpen} open ·{' '}
               <span className={s.totals.pnl >= 0 ? 'up' : 'down'}>{num(s.totals.pnl)}</span>
+            </span>
+          </div>
+
+          <div className="cycle-grid">
+            <span>
+              <strong className={(s.totals.expectancy ?? 0) >= 0 ? 'up' : 'down'}>
+                {num(s.totals.expectancy)}
+              </strong>
+              <small>expectancy / trade</small>
+            </span>
+            <span>
+              <strong>{s.totals.winRatePct === null ? '—' : `${s.totals.winRatePct}%`}</strong>
+              <small>win rate</small>
+            </span>
+            <span><strong>{s.totals.signals}</strong><small>signals</small></span>
+            <span><strong>{s.totals.rejected}</strong><small>rejected by risk</small></span>
+            <span>
+              <strong className="down">{s.totals.refusedButWorked}</strong>
+              <small>refusals that worked</small>
+            </span>
+            <span>
+              <strong className="up">{s.totals.refusedRightly}</strong>
+              <small>refusals that saved us</small>
+            </span>
+            <span>
+              <strong>{s.bestTimeframe ? s.bestTimeframe.timeframe : '—'}</strong>
+              <small>best timeframe</small>
             </span>
           </div>
 
@@ -127,7 +197,8 @@ export default function Strategies() {
                   <thead>
                     <tr>
                       <th>TF</th><th>Signals</th><th>Rejected</th><th>Opened</th><th>Closed</th>
-                      <th>Wins</th><th>Losses</th><th>Win rate</th><th>Avg P&amp;L</th><th>Net P&amp;L</th>
+                      <th>Wins</th><th>Losses</th><th>Win rate</th><th>PF</th>
+                      <th>Expectancy</th><th>Best</th><th>Worst</th><th>Net P&amp;L</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -141,7 +212,10 @@ export default function Strategies() {
                         <td className="up">{t.wins}</td>
                         <td className="down">{t.losses}</td>
                         <td>{t.winRatePct === null ? '—' : `${t.winRatePct}%`}</td>
-                        <td>{num(t.avgPnl)}</td>
+                        <td>{num(t.profitFactor)}</td>
+                        <td className={(t.expectancy ?? 0) >= 0 ? 'up' : 'down'}>{num(t.expectancy)}</td>
+                        <td className="up">{num(t.bestTrade)}</td>
+                        <td className="down">{num(t.worstTrade)}</td>
                         <td className={t.pnl >= 0 ? 'up' : 'down'}>{num(t.pnl)}</td>
                       </tr>
                     ))}

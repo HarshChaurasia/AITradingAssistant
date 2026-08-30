@@ -48,7 +48,7 @@ async function scanWatchlist({
   now = new Date()
 } = {}) {
   const settings = await loadOperationsSettings();
-  const activeTimeframe = timeframe || settings.tradedTimeframe;
+  const activeTimeframe = timeframe || settings.tradedTimeframes[0];
 
   const strategyRows = await query('SELECT * FROM strategies ORDER BY name');
   const symbols = await query(
@@ -69,9 +69,9 @@ async function scanWatchlist({
     at: new Date().toISOString(),
     mode,
     timeframe: activeTimeframe,
-    // The scheduler evaluates exactly one timeframe. Reporting it lets the UI
-    // avoid claiming a setup on any other will be taken automatically.
-    tradedTimeframe: settings.tradedTimeframe,
+    // Which timeframes the scheduler actually acts on. Reporting them lets the
+    // UI avoid claiming a setup on any other will be taken automatically.
+    tradedTimeframes: settings.tradedTimeframes,
     balance,
     rows
   };

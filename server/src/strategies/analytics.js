@@ -32,10 +32,19 @@ async function liveByStrategyTimeframe({ mode = 'demo' } = {}) {
             SUM(t.status = 'OPEN')                                    AS tradesOpen,
             SUM(t.status = 'CLOSED' AND t.pnl > 0)                    AS wins,
             SUM(t.status = 'CLOSED' AND t.pnl <= 0)                   AS losses,
-            COALESCE(SUM(CASE WHEN t.status = 'CLOSED' THEN t.pnl END), 0) AS pnl
+            COALESCE(SUM(CASE WHEN t.status = 'CLOSED' THEN t.pnl END), 0) AS pnl,
+            COALESCE(SUM(CASE WHEN t.status = 'CLOSED' AND t.pnl > 0 THEN t.pnl END), 0)  AS grossWin,
+            COALESCE(SUM(CASE WHEN t.status = 'CLOSED' AND t.pnl <= 0 THEN t.pnl END), 0) AS grossLoss,
+            MAX(CASE WHEN t.status = 'CLOSED' THEN t.pnl END)          AS bestTrade,
+            MIN(CASE WHEN t.status = 'CLOSED' THEN t.pnl END)          AS worstTrade,
+            -- Refusals the missed-signal grader has since judged. This is the
+            -- only measure there is of a signal the system never acted on.
+            SUM(o.verdict = 'costly')                                  AS refusedButWorked,
+            SUM(o.verdict = 'correct')                                 AS refusedRightly
        FROM signals sig
        JOIN strategies st ON st.id = sig.strategy_id
        LEFT JOIN trades t ON t.signal_id = sig.id AND t.mode = sig.mode
+       LEFT JOIN signal_outcomes o ON o.signal_id = sig.id
       WHERE sig.mode = ?
       GROUP BY st.name, sig.timeframe
       ORDER BY st.name, sig.timeframe`,
@@ -44,6 +53,11 @@ async function liveByStrategyTimeframe({ mode = 'demo' } = {}) {
 
   return rows.map((r) => {
     const closed = Number(r.tradesClosed);
+    const grossWin = Number(r.grossWin);
+    const grossLoss = Math.abs(Number(r.grossLoss));
+    const refusedWorked = Number(r.refusedButWorked);
+    const refusedRight = Number(r.refusedRightly);
+
     return {
       strategy: r.strategy,
       timeframe: r.timeframe,
@@ -54,9 +68,23 @@ async function liveByStrategyTimeframe({ mode = 'demo' } = {}) {
       tradesOpen: Number(r.tradesOpen),
       wins: Number(r.wins),
       losses: Number(r.losses),
-      pnl: Number(r.pnl),
+      pnl: Number(Number(r.pnl).toFixed(2)),
       winRatePct: ratio(Number(r.wins), closed),
-      avgPnl: closed > 0 ? Number((Number(r.pnl) / closed).toFixed(2)) : null
+      // Expectancy per trade is what compounds. A 70% win rate with a negative
+      // expectancy is a losing strategy that feels like a winning one, which
+      // is exactly the trap a bare win rate sets.
+      expectancy: closed > 0 ? Number((Number(r.pnl) / closed).toFixed(2)) : null,
+      // Infinity is the honest answer when there are wins and no losses, but
+      // it does not survive JSON - so it is null, with the win count beside it
+      // rather than a fabricated number.
+      profitFactor: grossLoss > 0 ? Number((grossWin / grossLoss).toFixed(2)) : null,
+      bestTrade: r.bestTrade === null ? null : Number(r.bestTrade),
+      worstTrade: r.worstTrade === null ? null : Number(r.worstTrade),
+      refusedButWorked: refusedWorked,
+      refusedRightly: refusedRight,
+      // Of the refusals the market has since judged, how often was refusing
+      // the right call?
+      refusalAccuracyPct: ratio(refusedRight, refusedRight + refusedWorked)
     };
   });
 }
@@ -125,13 +153,25 @@ async function strategyAnalytics({ mode = 'demo' } = {}) {
       byTimeframe: mine,
       totals: {
         signals: mine.reduce((n, l) => n + l.signals, 0),
+        rejected: mine.reduce((n, l) => n + l.rejected, 0),
         tradesClosed: closed,
         tradesOpen: mine.reduce((n, l) => n + l.tradesOpen, 0),
         wins,
         losses: mine.reduce((n, l) => n + l.losses, 0),
         pnl: Number(mine.reduce((n, l) => n + l.pnl, 0).toFixed(2)),
-        winRatePct: ratio(wins, closed)
+        winRatePct: ratio(wins, closed),
+        expectancy: closed > 0
+          ? Number((mine.reduce((n, l) => n + l.pnl, 0) / closed).toFixed(2))
+          : null,
+        refusedButWorked: mine.reduce((n, l) => n + l.refusedButWorked, 0),
+        refusedRightly: mine.reduce((n, l) => n + l.refusedRightly, 0)
       },
+      // The timeframe this strategy has done best on, by expectancy rather
+      // than total P&L: total rewards whichever timeframe simply traded most,
+      // which is not the same as the one that traded best.
+      bestTimeframe: mine
+        .filter((l) => l.tradesClosed > 0)
+        .sort((a, b) => (b.expectancy ?? -Infinity) - (a.expectancy ?? -Infinity))[0] || null,
       backtests: {
         runs: runs.length,
         passed: runs.filter((r) => r.passed).length,
@@ -141,7 +181,57 @@ async function strategyAnalytics({ mode = 'demo' } = {}) {
     };
   });
 
-  return { mode, strategies, matrix };
+  /**
+   * A ranking, so the screen can lead with an answer rather than a table.
+   *
+   * A strategy with no closed trades ranks last however good its backtest
+   * looks. An untested claim and a measured result do not belong on the same
+   * scale, and putting a promising backtest above a strategy that has actually
+   * made money would be precisely the wrong advice.
+   */
+  const order = [...strategies].sort((a, b) => {
+    const aTraded = a.totals.tradesClosed > 0;
+    const bTraded = b.totals.tradesClosed > 0;
+    if (aTraded !== bTraded) return bTraded ? 1 : -1;
+    if (aTraded && bTraded) return (b.totals.expectancy ?? 0) - (a.totals.expectancy ?? 0);
+    return b.backtests.passed - a.backtests.passed
+      || (b.backtests.best?.profitFactor ?? 0) - (a.backtests.best?.profitFactor ?? 0);
+  });
+  order.forEach((s, i) => { s.rank = i + 1; });
+
+  /**
+   * Which timeframe is working, across every strategy.
+   *
+   * This is the question multi-timeframe trading exists to answer, and it
+   * cannot be read off the per-strategy tables without doing the arithmetic
+   * by eye.
+   */
+  const buckets = new Map();
+  for (const s of strategies) {
+    for (const t of s.byTimeframe) {
+      const bucket = buckets.get(t.timeframe) || {
+        timeframe: t.timeframe, signals: 0, rejected: 0, tradesClosed: 0, wins: 0, losses: 0, pnl: 0
+      };
+      bucket.signals += t.signals;
+      bucket.rejected += t.rejected;
+      bucket.tradesClosed += t.tradesClosed;
+      bucket.wins += t.wins;
+      bucket.losses += t.losses;
+      bucket.pnl += t.pnl;
+      buckets.set(t.timeframe, bucket);
+    }
+  }
+
+  const byTimeframe = [...buckets.values()]
+    .map((b) => ({
+      ...b,
+      pnl: Number(b.pnl.toFixed(2)),
+      winRatePct: ratio(b.wins, b.tradesClosed),
+      expectancy: b.tradesClosed > 0 ? Number((b.pnl / b.tradesClosed).toFixed(2)) : null
+    }))
+    .sort((a, b) => (b.expectancy ?? -Infinity) - (a.expectancy ?? -Infinity));
+
+  return { mode, strategies, matrix, byTimeframe };
 }
 
 async function setStrategyEnabled(id, enabled) {

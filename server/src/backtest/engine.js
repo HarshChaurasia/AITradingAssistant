@@ -54,6 +54,11 @@ function runBacktest({ candles, strategy, params, symbol, options }) {
 
   const trades = [];
   const signals = [];
+  // Setups that fired but could not be sized. Counting these is the
+  // difference between "this strategy has no edge" and "every trade was
+  // refused because the account is too small for one minimum lot" - which
+  // produce an identical zero-trade result and completely different fixes.
+  const skipped = [];
   let open = null;
   let balance = startingBalance;
   let pending = null;
@@ -66,11 +71,22 @@ function runBacktest({ candles, strategy, params, symbol, options }) {
       const entryPrice = applyEntrySlippage({
         side: pending.side, price: candle.open, spreadPrice, slippagePrice
       });
-      const { lot } = sizePosition({
+      const sized = sizePosition({
         balance, riskPct: riskPctPerTrade, entry: entryPrice, sl: pending.sl, symbol
       });
 
-      if (lot > 0) {
+      if (sized.lot <= 0) {
+        skipped.push({
+          time: candle.open_time,
+          side: pending.side,
+          entry: entryPrice,
+          sl: pending.sl,
+          reason: sized.reason || 'position size came out as zero'
+        });
+      }
+
+      if (sized.lot > 0) {
+        const lot = sized.lot;
         open = {
           side: pending.side,
           lot,
@@ -148,7 +164,7 @@ function runBacktest({ candles, strategy, params, symbol, options }) {
     });
   }
 
-  return { trades, signals };
+  return { trades, signals, skipped };
 }
 
 module.exports = { runBacktest };

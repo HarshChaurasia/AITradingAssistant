@@ -134,6 +134,49 @@ async function executeRun({
     outOfSample: computeMetrics(outResult.trades, { startingBalance })
   };
 
+  /**
+   * Why a window produced no trades.
+   *
+   * A zero-trade result reads as "this strategy never fires", and that is
+   * usually wrong: the commonest cause by far is an account too small to
+   * afford one minimum lot at the configured risk, which refuses every setup
+   * silently. Saying so turns an unreadable verdict into a one-line fix.
+   */
+  const diagnose = (result) => {
+    if (result.trades.length > 0 || result.skipped.length === 0) return null;
+    // Bucket on the shape of the reason, not its text: every message carries
+    // the specific numbers for that bar, so counting raw strings would report
+    // eighty-five distinct "reasons" for one cause.
+    const family = (reason) => reason.replace(/-?[\d.]+/g, '#');
+    const reasons = new Map();
+    for (const s of result.skipped) {
+      const key = family(s.reason);
+      const seen = reasons.get(key) || { count: 0, example: s.reason };
+      seen.count += 1;
+      reasons.set(key, seen);
+    }
+    const [, best] = [...reasons.entries()].sort((a, b) => b[1].count - a[1].count)[0];
+    const reason = best.example;
+    const count = best.count;
+    return {
+      setupsFired: result.skipped.length,
+      commonest: reason,
+      count,
+      detail:
+        `${result.skipped.length} setups fired but every one was skipped — ` +
+        `${count} of them because ${reason}. ` +
+        `With a starting balance of ${startingBalance} at ${runOptions.riskPctPerTrade}% risk, ` +
+        `the risk budget is ${(startingBalance * runOptions.riskPctPerTrade / 100).toFixed(2)} per trade.`
+    };
+  };
+
+  const skips = {
+    full: full.skipped.length,
+    inSample: inResult.skipped.length,
+    outOfSample: outResult.skipped.length,
+    diagnosis: diagnose(outResult) || diagnose(full)
+  };
+
   // The verdict comes from out-of-sample only. Judging a strategy on the data
   // its parameters were chosen against is how overfitting reaches production.
   const thresholds = await loadThresholds();
@@ -163,6 +206,7 @@ async function executeRun({
         walkForward,
         thresholds,
         failures,
+        skips,
         costs: {
           spreadPrice: runOptions.spreadPrice ?? 0,
           slippagePrice: runOptions.slippagePrice ?? 0,
@@ -197,7 +241,7 @@ async function executeRun({
     );
   }
 
-  return { runId, metrics, walkForward, passed, failures, thresholds, backfill, bars: candles.length };
+  return { runId, metrics, walkForward, passed, failures, thresholds, skips, backfill, bars: candles.length };
 }
 
 async function listRuns({ limit = 25 } = {}) {
@@ -263,6 +307,7 @@ async function sweep({
           runId: run.runId,
           passed: run.passed,
           failures: run.failures,
+          skips: run.skips,
           outOfSample: run.walkForward.outOfSample,
           bars: run.bars
         });

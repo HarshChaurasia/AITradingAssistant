@@ -66,7 +66,7 @@ test('generateSignals creates signals from the newest bar only', async (t) => {
   const { generateSignals } = require('../src/signals/generator');
   const { query } = require('../src/db/pool');
 
-  const result = await generateSignals({ mode: 'demo' });
+  const result = await generateSignals({ mode: 'demo', timeframe: 'H1' });
   assert.ok(result.evaluated > 0, 'at least one enabled strategy/symbol pair was evaluated');
 
   const signals = await query('SELECT * FROM signals');
@@ -84,10 +84,10 @@ test('running twice does not duplicate a signal for the same bar', async (t) => 
   const { generateSignals } = require('../src/signals/generator');
   const { query } = require('../src/db/pool');
 
-  await generateSignals({ mode: 'demo' });
+  await generateSignals({ mode: 'demo', timeframe: 'H1' });
   const first = (await query('SELECT COUNT(*) AS n FROM signals'))[0].n;
 
-  await generateSignals({ mode: 'demo' });
+  await generateSignals({ mode: 'demo', timeframe: 'H1' });
   const second = (await query('SELECT COUNT(*) AS n FROM signals'))[0].n;
 
   assert.equal(second, first, 'the dedupe key prevents a second signal for the same bar');
@@ -99,7 +99,7 @@ test('a disabled strategy produces nothing', async (t) => {
   const { query } = require('../src/db/pool');
 
   await query('UPDATE strategies SET enabled = 0');
-  const result = await generateSignals({ mode: 'demo' });
+  const result = await generateSignals({ mode: 'demo', timeframe: 'H1' });
 
   assert.equal(result.evaluated, 0);
   assert.equal((await query('SELECT COUNT(*) AS n FROM signals'))[0].n, 0);
@@ -111,7 +111,7 @@ test('a disabled symbol produces nothing', async (t) => {
   const { query } = require('../src/db/pool');
 
   await query('UPDATE symbols SET enabled = 0');
-  const result = await generateSignals({ mode: 'demo' });
+  const result = await generateSignals({ mode: 'demo', timeframe: 'H1' });
 
   assert.equal(result.evaluated, 0);
 });
@@ -125,7 +125,7 @@ test('with auto-trade off, a green signal waits for a click', async (t) => {
   // The default. Handing over the trigger is an explicit choice, so until the
   // operator makes it every signal queues - in demo exactly as in live.
   await saveOperationsSettings({ autoTradeEnabled: false });
-  await generateSignals({ mode: 'demo' });
+  await generateSignals({ mode: 'demo', timeframe: 'H1' });
 
   const signals = await query("SELECT * FROM signals WHERE mode = 'demo' AND status <> 'rejected'");
   assert.ok(signals.length > 0, 'the fixture must produce a demo candidate');
@@ -145,11 +145,11 @@ test('with auto-trade on, demo signals are approved and live ones still are not'
   // never reach a real account as a side effect.
   await saveOperationsSettings({ autoTradeEnabled: true, autoTradeLive: false });
 
-  await generateSignals({ mode: 'demo' });
+  await generateSignals({ mode: 'demo', timeframe: 'H1' });
   const demoSignals = await query("SELECT * FROM signals WHERE mode = 'demo'");
 
   await query('DELETE FROM signals');
-  await generateSignals({ mode: 'live' });
+  await generateSignals({ mode: 'live', timeframe: 'H1' });
   const liveSignals = await query("SELECT * FROM signals WHERE mode = 'live'");
 
   assert.ok(demoSignals.length > 0, 'the fixture must produce a demo candidate');
@@ -171,7 +171,7 @@ test('autoTradeLive is what lets a live signal approve itself', async (t) => {
   const { query } = require('../src/db/pool');
 
   await saveOperationsSettings({ autoTradeEnabled: true, autoTradeLive: true });
-  await generateSignals({ mode: 'live' });
+  await generateSignals({ mode: 'live', timeframe: 'H1' });
 
   const signals = await query("SELECT * FROM signals WHERE mode = 'live' AND status <> 'rejected'");
   assert.ok(signals.length > 0);
@@ -185,7 +185,7 @@ test('a signal denied by risk is stored as rejected with its reasons', async (t)
   const { query } = require('../src/db/pool');
 
   await tripKillSwitch({ mode: 'demo', reason: 'test halt' });
-  await generateSignals({ mode: 'demo' });
+  await generateSignals({ mode: 'demo', timeframe: 'H1' });
 
   const signals = await query('SELECT * FROM signals');
   assert.ok(signals.length > 0, 'the fixture must produce a candidate to reject');
@@ -201,7 +201,7 @@ test('approveSignal and rejectSignal move a signal out of the queue', async (t) 
   const { listSignals, approveSignal, rejectSignal } = require('../src/signals/store');
   const { query } = require('../src/db/pool');
 
-  await generateSignals({ mode: 'live' });
+  await generateSignals({ mode: 'live', timeframe: 'H1' });
   let pending = await listSignals({ mode: 'live', status: 'new' });
   if (pending.length === 0) {
     // The fixture produced no live candidate; insert one directly so the

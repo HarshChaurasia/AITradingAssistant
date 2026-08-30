@@ -175,7 +175,7 @@ function createScanRunner({
         durationMs: finishedAt.getTime() - startedAt.getTime(),
         mode,
         timeframes,
-        tradedTimeframe: settings.tradedTimeframe,
+        tradedTimeframes: settings.tradedTimeframes,
         balance,
         symbolsScanned: symbols.length,
         strategiesRun: strategyRows.length,

@@ -23,9 +23,12 @@ const DEFAULTS = {
   // Auto-trading on a live account is a second, separate decision. The
   // bridge's MT5_ALLOW_LIVE guard still applies on top of this.
   autoTradeLive: false,
-  // The timeframe the scheduler generates signals on. Trading a timeframe the
-  // backtest never covered is running an unvalidated strategy.
-  tradedTimeframe: 'H4',
+  // The timeframes the scheduler generates signals on. More than one is
+  // allowed so their results can be compared side by side - but each is a
+  // separate stream of trades against the same account, so the concurrent
+  // position limit and the daily loss cap are what stop three timeframes
+  // becoming three times the risk.
+  tradedTimeframes: ['H4'],
   // Timeframes the opportunity scan sweeps. Observation only.
   scanTimeframes: ['H1', 'H4', 'D1'],
   // Telegram when a tradeable setup appears in the scan.
@@ -34,6 +37,17 @@ const DEFAULTS = {
   // persists for a whole session sends a message every scan.
   alertCooldownMinutes: 60,
   // How long a signal stays actionable before the scheduler expires it.
+  //
+  // 'proportional' scales it to the bar: a signal is priced at its bar's
+  // close, and the longer it sits the further price has drifted from the
+  // level the strategy actually judged. Ten percent of an H4 bar is 24
+  // minutes; of an M15 bar, 90 seconds - so a floor keeps it above a couple
+  // of scheduler ticks, or a signal would expire before the loop could act
+  // on it.
+  signalExpiryMode: 'proportional',
+  signalExpiryPct: 10,
+  signalExpiryMinMinutes: 5,
+  // Used when the mode is 'fixed'.
   signalExpiryMinutes: 60,
   // Bars pulled when a backtest finds nothing stored.
   backfillBars: 2000,
@@ -64,6 +78,27 @@ function coerceTimeframe(value, fallback) {
   return TIMEFRAMES.includes(value) ? value : fallback;
 }
 
+const TIMEFRAME_MINUTES = { M5: 5, M15: 15, M30: 30, H1: 60, H4: 240, D1: 1440 };
+
+/**
+ * How long a signal on this timeframe stays actionable.
+ *
+ * A signal is priced at its bar's close. The longer it sits unexecuted the
+ * further price has drifted from the level the strategy actually judged, and
+ * an hour-old M5 signal is a fiction. Scaling to the bar keeps that drift
+ * proportionate - with a floor, because the scheduler only ticks once a
+ * minute and a signal that expires between ticks can never be acted on.
+ */
+function expiryMinutesFor(timeframe, settings) {
+  if (settings.signalExpiryMode === 'fixed') return settings.signalExpiryMinutes;
+
+  const barMinutes = TIMEFRAME_MINUTES[timeframe] || 60;
+  const proportional = Math.ceil(barMinutes * (settings.signalExpiryPct / 100));
+  // Never longer than the bar itself: by then the next bar has closed and the
+  // strategy has had a fresh opportunity to say something.
+  return Math.min(Math.max(proportional, settings.signalExpiryMinMinutes), barMinutes);
+}
+
 /**
  * Unknown keys are dropped rather than stored.
  *
@@ -77,13 +112,26 @@ function normalise(raw = {}) {
     ? merged.scanTimeframes.filter((tf) => TIMEFRAMES.includes(tf))
     : DEFAULTS.scanTimeframes;
 
+  // Accept a bare string for the traded timeframes: that is the shape the
+  // setting had before it became a list, and a stored value from then must
+  // not read back as "no timeframes" and silently stop the loop trading.
+  const rawTraded = typeof merged.tradedTimeframes === 'string'
+    ? [merged.tradedTimeframes]
+    : merged.tradedTimeframes;
+  const tradedTimeframes = Array.isArray(rawTraded)
+    ? rawTraded.filter((tf) => TIMEFRAMES.includes(tf))
+    : DEFAULTS.tradedTimeframes;
+
   return {
     autoTradeEnabled: coerceBoolean(merged.autoTradeEnabled, DEFAULTS.autoTradeEnabled),
     autoTradeLive: coerceBoolean(merged.autoTradeLive, DEFAULTS.autoTradeLive),
-    tradedTimeframe: coerceTimeframe(merged.tradedTimeframe, DEFAULTS.tradedTimeframe),
+    tradedTimeframes: tradedTimeframes.length ? tradedTimeframes : DEFAULTS.tradedTimeframes,
     scanTimeframes: scanTimeframes.length ? scanTimeframes : DEFAULTS.scanTimeframes,
     scannerAlertsEnabled: coerceBoolean(merged.scannerAlertsEnabled, DEFAULTS.scannerAlertsEnabled),
     alertCooldownMinutes: coerceInteger(merged.alertCooldownMinutes, DEFAULTS.alertCooldownMinutes, { min: 1, max: 1440 }),
+    signalExpiryMode: merged.signalExpiryMode === 'fixed' ? 'fixed' : 'proportional',
+    signalExpiryPct: coerceInteger(merged.signalExpiryPct, DEFAULTS.signalExpiryPct, { min: 1, max: 100 }),
+    signalExpiryMinMinutes: coerceInteger(merged.signalExpiryMinMinutes, DEFAULTS.signalExpiryMinMinutes, { min: 2, max: 1440 }),
     signalExpiryMinutes: coerceInteger(merged.signalExpiryMinutes, DEFAULTS.signalExpiryMinutes, { min: 5, max: 10080 }),
     backfillBars: coerceInteger(merged.backfillBars, DEFAULTS.backfillBars, { min: 100, max: 20000 }),
     staleTickSeconds: coerceInteger(merged.staleTickSeconds, DEFAULTS.staleTickSeconds, { min: 60, max: 86400 }),
@@ -111,6 +159,8 @@ module.exports = {
   loadOperationsSettings,
   saveOperationsSettings,
   normalise,
+  expiryMinutesFor,
+  TIMEFRAME_MINUTES,
   DEFAULT_OPERATIONS_SETTINGS: DEFAULTS,
   TIMEFRAMES
 };

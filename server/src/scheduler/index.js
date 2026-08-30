@@ -6,7 +6,7 @@ const { executeApprovedSignals } = require('../execution/manager');
 const { reconcile } = require('../execution/reconciler');
 const { ensureBridgeConnected, checkDisk } = require('./health');
 const healthAlerts = require('../alerts/health');
-const { loadOperationsSettings } = require('../settings/operations');
+const { loadOperationsSettings, expiryMinutesFor } = require('../settings/operations');
 const { evaluateMissedSignals } = require('../signals/missed');
 const { refreshMarketStatus, watchedSymbols } = require('../market/market-hours');
 
@@ -27,7 +27,7 @@ function createScheduler({
   // backtest never covered is running an unvalidated strategy.
   // An explicit override wins; otherwise the operator's saved setting decides,
   // re-read every tick so a dashboard change lands without a restart.
-  timeframe = null,
+  timeframes = null,
   syncCandlesFn = syncCandles,
   listSymbolsFn = listSymbols,
   generateSignalsFn = generateSignals,
@@ -60,7 +60,7 @@ function createScheduler({
 
   async function runOnce() {
     const settings = await loadSettingsFn();
-    const activeTimeframe = timeframe || settings.tradedTimeframe;
+    const activeTimeframes = timeframes || settings.tradedTimeframes;
 
     // Before anything else: is the broker link alive? A dropped MT5
     // connection never recovers on its own - the bridge cannot retry from
@@ -73,7 +73,7 @@ function createScheduler({
         at: new Date().toISOString(),
         bridgeDown: true,
         diskFreeGb: disk.freeGb,
-        timeframe: activeTimeframe,
+        timeframes: activeTimeframes,
         note: 'broker link is down; skipping this cycle'
       };
       return lastResult;
@@ -97,18 +97,23 @@ function createScheduler({
     // only - watching a symbol must never make it tradeable.
     const symbols = await listSymbolsFn({ watchedOnly: true });
 
+    // Every traded timeframe needs its own candles. Sequential on purpose:
+    // concurrent history requests to a single MT5 terminal are how the bridge
+    // stops answering.
     let symbolsSynced = 0;
     for (const symbol of symbols) {
-      await syncCandlesFn(bridge, {
-        symbolId: symbol.id,
-        brokerSymbol: symbol.broker_symbol,
-        timeframe: activeTimeframe,
-        count: 300
-      });
+      for (const tf of activeTimeframes) {
+        await syncCandlesFn(bridge, {
+          symbolId: symbol.id,
+          brokerSymbol: symbol.broker_symbol,
+          timeframe: tf,
+          count: 300
+        });
+      }
       symbolsSynced += 1;
     }
 
-    const signals = await generateSignalsFn({ mode, timeframe: activeTimeframe, settings });
+    const signals = await generateSignalsFn({ mode, timeframes: activeTimeframes, settings });
 
     // Execute before reconciling: a fill from this tick is then picked up by
     // the next one, rather than being reconciled against a broker that has
@@ -118,8 +123,13 @@ function createScheduler({
       : { attempted: 0, filled: 0, skipped: 0, failed: 0, disabled: true };
 
     const reconciliation = await reconcileFn({ bridge, mode });
+    // Per timeframe, because a signal is priced at its bar's close: an M15
+    // signal is stale in minutes while a D1 signal is still good hours later.
     const expired = await expireStaleSignalsFn({
-      olderThanMinutes: settings.signalExpiryMinutes, mode
+      olderThanMinutes: Object.fromEntries(
+        activeTimeframes.map((tf) => [tf, expiryMinutesFor(tf, settings)])
+      ),
+      mode
     });
 
     // Grade the setups we refused against the candles that have arrived since.
@@ -145,7 +155,7 @@ function createScheduler({
       at: new Date().toISOString(),
       bridgeDown: false,
       diskFreeGb: disk.freeGb,
-      timeframe: activeTimeframe,
+      timeframes: activeTimeframes,
       autoTrade: settings.autoTradeEnabled,
       symbolsSynced, marketsChecked, signals, execution, reconciliation, expired, missed
     };

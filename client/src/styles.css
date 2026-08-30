@@ -806,3 +806,13 @@ button {
   font-size: 0.7rem;
   color: var(--muted);
 }
+
+.rank {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--bg);
+  background: var(--blue);
+}

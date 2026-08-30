@@ -54,18 +54,35 @@ async function rejectSignal(id, reason) {
  * A signal describes a setup on one bar. Once that bar is well in the past the
  * setup no longer exists, so acting on it would be trading a stale idea.
  */
-async function expireStaleSignals({ olderThanMinutes = 60, mode } = {}) {
+/**
+ * Expire signals nobody acted on.
+ *
+ * `olderThanMinutes` accepts a number, or a map of timeframe to minutes. The
+ * map is what proportional expiry needs: a signal is priced at its bar's
+ * close, so an M15 signal goes stale in minutes while a D1 signal is still
+ * perfectly good hours later. One number cannot be right for both.
+ */
+async function expireStaleSignals({ olderThanMinutes = 60, mode, timeframe } = {}) {
+  if (olderThanMinutes && typeof olderThanMinutes === 'object') {
+    let expired = 0;
+    for (const [tf, minutes] of Object.entries(olderThanMinutes)) {
+      expired += await expireStaleSignals({ olderThanMinutes: minutes, mode, timeframe: tf });
+    }
+    return expired;
+  }
+
   const minutes = Math.max(Number.parseInt(olderThanMinutes, 10) || 60, 1);
   const params = [];
-  let modeClause = '';
-  if (mode) { modeClause = 'AND mode = ?'; params.push(mode); }
+  let clauses = '';
+  if (mode) { clauses += ' AND mode = ?'; params.push(mode); }
+  if (timeframe) { clauses += ' AND timeframe = ?'; params.push(timeframe); }
 
   const result = await query(
     `UPDATE signals
         SET status = 'expired', decided_at = UTC_TIMESTAMP(), decided_by = 'system'
       WHERE status = 'new'
         AND generated_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL ${minutes} MINUTE)
-        ${modeClause}`,
+        ${clauses}`,
     params
   );
   return result.affectedRows || 0;

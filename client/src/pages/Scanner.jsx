@@ -203,9 +203,9 @@ export default function Scanner() {
           sub={last ? `alerts sent ${last.alerted}` : ''}
         />
         <Stat
-          label="Traded timeframe"
-          value={last?.tradedTimeframe || '—'}
-          sub="the only one the scheduler acts on"
+          label="Traded timeframes"
+          value={last?.tradedTimeframes?.join(', ') || '—'}
+          sub="the only ones the scheduler acts on"
           tone="blue"
         />
       </div>
@@ -331,9 +331,9 @@ export default function Scanner() {
                               <div className="scan-detail">
                                 <p className="scan-reason">{o.reason}</p>
                                 {o.blockedBy && <p className="scan-verdict blocked">blocked: {o.blockedBy}</p>}
-                                {o.timeframe !== last.tradedTimeframe && o.wouldTrade && (
+                                {!last.tradedTimeframes?.includes(o.timeframe) && o.wouldTrade && (
                                   <p className="scan-verdict blocked">
-                                    the scheduler only trades {last.tradedTimeframe}, so this{' '}
+                                    the scheduler trades {last.tradedTimeframes?.join(', ')}, so this{' '}
                                     {o.timeframe} setup will not be taken automatically
                                   </p>
                                 )}

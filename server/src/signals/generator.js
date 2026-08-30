@@ -22,21 +22,16 @@ async function countOpenPositions(mode) {
  * of the strategy contract: if live and backtest ever run different code, the
  * demo period measures nothing about the strategy.
  */
-async function generateSignals({
-  mode = 'demo',
-  now = new Date(),
-  timeframe = DEFAULT_TIMEFRAME,
-  settings = null
-} = {}) {
-  const ops = settings || (await loadOperationsSettings());
-
-  // Auto-approval is the operator's switch, not the mode's. With it off a
-  // signal waits as `new` for a click; the execution path is identical either
-  // way, so an approved signal behaves exactly like an auto-approved one.
-  const autoApprove = ops.autoTradeEnabled && (mode !== 'live' || ops.autoTradeLive);
-
-  const strategies = await query('SELECT * FROM strategies WHERE enabled = 1');
-  const symbols = await query('SELECT * FROM symbols WHERE enabled = 1');
+/**
+ * Generate signals for one timeframe.
+ *
+ * Split out from generateSignals so several timeframes can be run in one
+ * pass: each is an independent stream of candidates against the same account,
+ * which is what makes comparing their results meaningful.
+ */
+async function generateForTimeframe({
+  mode, now, timeframe, strategies, symbols, autoApprove
+}) {
 
   let evaluated = 0;
   let created = 0;
@@ -105,7 +100,54 @@ async function generateSignals({
     }
   }
 
-  return { evaluated, created, skipped, autoApprove };
+  return { evaluated, created, skipped };
 }
 
-module.exports = { generateSignals, countOpenPositions };
+/**
+ * Runs enabled strategies over every traded timeframe.
+ *
+ * Several timeframes at once is deliberate: it is the only way to find out
+ * which one this edge actually works on. It is also several times the trade
+ * frequency, so the concurrent-position limit and the daily loss cap are
+ * doing real work here rather than sitting idle.
+ */
+async function generateSignals({
+  mode = 'demo',
+  now = new Date(),
+  timeframe = null,
+  timeframes = null,
+  settings = null
+} = {}) {
+  const ops = settings || (await loadOperationsSettings());
+
+  // A single `timeframe` still wins when passed - the tests and the manual
+  // paths use it - otherwise every configured timeframe runs.
+  const active = timeframe ? [timeframe] : (timeframes || ops.tradedTimeframes || [DEFAULT_TIMEFRAME]);
+
+  // Auto-approval is the operator's switch, not the mode's. With it off a
+  // signal waits as `new` for a click; the execution path is identical either
+  // way, so an approved signal behaves exactly like an auto-approved one.
+  const autoApprove = ops.autoTradeEnabled && (mode !== 'live' || ops.autoTradeLive);
+
+  const strategies = await query('SELECT * FROM strategies WHERE enabled = 1');
+  const symbols = await query('SELECT * FROM symbols WHERE enabled = 1');
+
+  const byTimeframe = {};
+  let evaluated = 0;
+  let created = 0;
+  let skipped = 0;
+
+  for (const tf of active) {
+    const result = await generateForTimeframe({
+      mode, now, timeframe: tf, strategies, symbols, autoApprove
+    });
+    byTimeframe[tf] = result;
+    evaluated += result.evaluated;
+    created += result.created;
+    skipped += result.skipped;
+  }
+
+  return { evaluated, created, skipped, autoApprove, timeframes: active, byTimeframe };
+}
+
+module.exports = { generateSignals, generateForTimeframe, countOpenPositions };

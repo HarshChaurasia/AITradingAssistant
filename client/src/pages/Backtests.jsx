@@ -37,7 +37,11 @@ export default function Backtests() {
   const [strategyName, setStrategyName] = useState('');
   const [symbolId, setSymbolId] = useState(null);
   const [timeframe, setTimeframe] = useState('H1');
-  const [balance, setBalance] = useState(100);
+  // Not 100. At a 1% risk budget of one dollar, the minimum lot on every
+  // instrument here risks several percent, so the sizer refuses every single
+  // setup and the run reports "0 trades" as though the strategy never fired.
+  // That one default was responsible for most backtests appearing to fail.
+  const [balance, setBalance] = useState(10000);
   const [riskPct, setRiskPct] = useState(1);
   const [spread, setSpread] = useState(0.0002);
   const [commission, setCommission] = useState(7);
@@ -59,6 +63,12 @@ export default function Backtests() {
     }).catch((e) => setError(e.message));
 
     api.backtests().then(setRuns).catch((e) => setError(e.message));
+
+    // Start from the real account size when the broker is reachable, so the
+    // run measures what this account would actually have done.
+    api.bridgeAccount()
+      .then((a) => { if (a?.balance > 0) setBalance(Math.round(a.balance)); })
+      .catch(() => {});
   }, []);
 
   async function run() {
@@ -181,6 +191,18 @@ export default function Backtests() {
             )}
           </div>
 
+          {result.skips?.diagnosis && (
+            <p className="error">
+              <strong>Why there were no trades: </strong>{result.skips.diagnosis.detail}
+            </p>
+          )}
+          {!result.skips?.diagnosis && result.skips?.outOfSample > 0 && (
+            <p className="muted">
+              {result.skips.outOfSample} out-of-sample setups were skipped because they could not
+              be sized at this balance and risk. The trades below are the ones that could.
+            </p>
+          )}
+
           <div className="metrics-grid">
             <MetricsTable title="In-sample (first 70%)" metrics={result.walkForward.inSample} />
             <MetricsTable title="Out-of-sample (last 30%)" metrics={result.walkForward.outOfSample} />
@@ -226,9 +248,12 @@ export default function Backtests() {
                     <td className="muted">{r.bars ?? '—'}</td>
                     <td
                       className={r.ok && r.passed ? 'up' : 'down'}
-                      title={r.ok ? (r.failures || []).join('; ') : r.error}
+                      title={r.ok
+                        ? [...(r.failures || []), r.skips?.diagnosis?.detail].filter(Boolean).join('; ')
+                        : r.error}
                     >
                       {r.ok ? (r.passed ? 'PASS' : 'fail') : 'error'}
+                      {r.ok && r.skips?.diagnosis && <small className="muted"> unsizable</small>}
                     </td>
                   </tr>
                 ))}

@@ -110,36 +110,25 @@ export default function Settings() {
           </p>
         )}
 
-        <label className="setting-field">
-          <span>
-            <strong>Traded timeframe</strong>
-            <small className="muted">
-              The timeframe the scheduler generates signals on. Trading a timeframe the backtest
-              never covered is running an unvalidated strategy.
-            </small>
-          </span>
-          <select value={ops.tradedTimeframe} onChange={(e) => set({ tradedTimeframe: e.target.value })}>
-            {timeframes.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
-          </select>
-        </label>
-
         <div className="setting-field">
           <span>
-            <strong>Scanned timeframes</strong>
+            <strong>Traded timeframes</strong>
             <small className="muted">
-              What the live scanner sweeps. Observation only — a setup on one of these is never
-              taken automatically unless it is also the traded timeframe.
+              The timeframes the scheduler generates signals on. Several at once is how you find
+              out which one this edge actually works on — but each is a separate stream of trades
+              against the same account, so the concurrent-position limit and the daily loss cap
+              below are what stop three timeframes becoming three times the risk.
             </small>
           </span>
           <div className="tf-group">
             {timeframes.map((tf) => (
               <button
                 key={tf}
-                className={ops.scanTimeframes.includes(tf) ? 'tf active' : 'tf'}
+                className={ops.tradedTimeframes.includes(tf) ? 'tf active' : 'tf'}
                 onClick={() => set({
-                  scanTimeframes: ops.scanTimeframes.includes(tf)
-                    ? ops.scanTimeframes.filter((x) => x !== tf)
-                    : [...ops.scanTimeframes, tf]
+                  tradedTimeframes: ops.tradedTimeframes.includes(tf)
+                    ? ops.tradedTimeframes.filter((x) => x !== tf)
+                    : [...ops.tradedTimeframes, tf]
                 })}
               >
                 {tf}
@@ -148,14 +137,77 @@ export default function Settings() {
           </div>
         </div>
 
-        <NumberField
-          label="Signal expiry (minutes)"
-          hint="How long a signal stays actionable before the scheduler expires it."
-          value={ops.signalExpiryMinutes}
-          min={5}
-          max={10080}
-          onChange={(v) => set({ signalExpiryMinutes: v })}
-        />
+        {ops.tradedTimeframes.length === 0 && (
+          <p className="error">
+            No traded timeframe selected, so the scheduler will generate no signals at all. The
+            last valid selection stays in force until you pick at least one.
+          </p>
+        )}
+
+        <div className="setting-field">
+          <span>
+            <strong>Signal expiry</strong>
+            <small className="muted">
+              A signal is priced at its bar&apos;s close, so the longer it sits unexecuted the
+              further price has drifted from the level the strategy actually judged.
+              <strong> Proportional</strong> scales the window to the bar; a fixed number cannot be
+              right for both an M15 signal and a D1 one.
+            </small>
+          </span>
+          <select
+            value={ops.signalExpiryMode}
+            onChange={(e) => set({ signalExpiryMode: e.target.value })}
+          >
+            <option value="proportional">proportional to the bar</option>
+            <option value="fixed">a fixed number of minutes</option>
+          </select>
+        </div>
+
+        {ops.signalExpiryMode === 'proportional' ? (
+          <>
+            <NumberField
+              label="Expiry as % of the bar"
+              hint="10% of an H4 bar is 24 minutes; of an M15 bar, 90 seconds. Never longer than the bar itself — by then the next one has closed and the strategy has had a fresh say."
+              value={ops.signalExpiryPct}
+              min={1}
+              max={100}
+              onChange={(v) => set({ signalExpiryPct: v })}
+            />
+            <NumberField
+              label="Minimum expiry (minutes)"
+              hint="The floor. The scheduler ticks once a minute, so a signal that expires between ticks could never be acted on."
+              value={ops.signalExpiryMinMinutes}
+              min={2}
+              max={1440}
+              onChange={(v) => set({ signalExpiryMinMinutes: v })}
+            />
+            <div className="setting-field">
+              <span>
+                <strong>Resulting windows</strong>
+                <small className="muted">what each traded timeframe works out to</small>
+              </span>
+              <span className="muted">
+                {ops.tradedTimeframes.map((tf) => {
+                  const bar = { M5: 5, M15: 15, M30: 30, H1: 60, H4: 240, D1: 1440 }[tf] || 60;
+                  const minutes = Math.min(
+                    Math.max(Math.ceil(bar * (ops.signalExpiryPct / 100)), ops.signalExpiryMinMinutes),
+                    bar
+                  );
+                  return `${tf} ${minutes}m`;
+                }).join(' · ') || '—'}
+              </span>
+            </div>
+          </>
+        ) : (
+          <NumberField
+            label="Signal expiry (minutes)"
+            hint="The same window for every timeframe."
+            value={ops.signalExpiryMinutes}
+            min={5}
+            max={10080}
+            onChange={(v) => set({ signalExpiryMinutes: v })}
+          />
+        )}
 
         <NumberField
           label="Stale quote threshold (seconds)"
