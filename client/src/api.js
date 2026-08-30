@@ -95,6 +95,8 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ symbolId, strategy, timeframe })
     }),
+  performance: (mode = 'demo', days = 30) =>
+    request(`/api/performance?mode=${mode}&days=${days}`),
   strategies: () => request('/api/strategies'),
   backtests: () => request('/api/backtests'),
   backtest: (id) => request(`/api/backtests/${id}`),

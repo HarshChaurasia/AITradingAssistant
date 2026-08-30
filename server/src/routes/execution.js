@@ -4,6 +4,7 @@ const { query } = require('../db/pool');
 const { executeApprovedSignals } = require('../execution/manager');
 const { reconcile } = require('../execution/reconciler');
 const { listTrades, tradeStats, equityHistory } = require('../execution/journal');
+const { dailyPerformance, breakdown } = require('../execution/performance');
 
 function createExecutionRouter({ bridge }) {
   const router = express.Router();
@@ -29,6 +30,19 @@ function createExecutionRouter({ bridge }) {
   router.get('/equity', async (req, res, next) => {
     try {
       res.json(await equityHistory({ mode: req.query.mode || 'demo', limit: req.query.limit }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/performance', async (req, res, next) => {
+    try {
+      const mode = String(req.query.mode || 'demo');
+      res.json({
+        mode,
+        daily: await dailyPerformance({ mode, days: req.query.days }),
+        ...(await breakdown({ mode }))
+      });
     } catch (error) {
       next(error);
     }
