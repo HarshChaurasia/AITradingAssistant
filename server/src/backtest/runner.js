@@ -85,6 +85,36 @@ async function backfillIfEmpty({ bridge, symbol, timeframe, bars }) {
   }
 }
 
+/**
+ * Trim a candle series to a date range.
+ *
+ * Bars OUTSIDE the range are kept, not discarded - the range restricts where
+ * trades may be taken, not what the indicators may see. Slicing the array
+ * instead would warm a 200-bar EMA from a truncated history, so the same bar
+ * would produce a different value here than it did live, and the result would
+ * stop predicting anything.
+ */
+function tradeWindowFor(candles, { from, to }) {
+  if (!from && !to) return null;
+
+  const fromMs = from ? Date.parse(from) : null;
+  const toMs = to ? Date.parse(to) : null;
+
+  let tradeFrom = 0;
+  let tradeTo = candles.length;
+
+  if (Number.isFinite(fromMs)) {
+    const found = candles.findIndex((c) => Date.parse(c.open_time) >= fromMs);
+    tradeFrom = found === -1 ? candles.length : found;
+  }
+  if (Number.isFinite(toMs)) {
+    const found = candles.findIndex((c) => Date.parse(c.open_time) > toMs);
+    tradeTo = found === -1 ? candles.length : found;
+  }
+
+  return { tradeFrom, tradeTo };
+}
+
 async function executeRun({
   strategyName, symbolId, timeframe = 'H1', params = {}, options = {},
   // Optional. When present, a missing candle store is filled rather than
@@ -114,12 +144,30 @@ async function executeRun({
   const startingBalance = options.startingBalance ?? 10000;
   const runOptions = { startingBalance, riskPctPerTrade: 1, ...options };
 
-  const full = runBacktest({ candles, strategy, params: mergedParams, symbol, options: runOptions });
+  // A date range narrows the tradeable window and the walk-forward split is
+  // then taken WITHIN it, so "the last year" means a year of in-sample and
+  // out-of-sample, not a year plus whatever else happens to be stored.
+  const window = tradeWindowFor(candles, { from: options.from, to: options.to });
+  const rangeFrom = window ? window.tradeFrom : 0;
+  const rangeTo = window ? window.tradeTo : candles.length;
+  if (rangeTo - rangeFrom < 2) {
+    throw new Error(
+      `no candles stored for ${symbol.broker_symbol} ${timeframe} between ` +
+      `${options.from || 'the start'} and ${options.to || 'now'}`
+    );
+  }
+
+  const full = runBacktest({
+    candles, strategy, params: mergedParams, symbol,
+    options: { ...runOptions, tradeFrom: rangeFrom, tradeTo: rangeTo }
+  });
   const metrics = computeMetrics(full.trades, { startingBalance });
 
-  const { inSampleRange, outOfSampleRange } = splitWalkForward(candles, {
-    inSampleFraction: options.inSampleFraction ?? 0.7
-  });
+  // The split is taken across the chosen window, not the whole store.
+  const span = rangeTo - rangeFrom;
+  const cut = rangeFrom + Math.floor(span * (options.inSampleFraction ?? 0.7));
+  const inSampleRange = { tradeFrom: rangeFrom, tradeTo: cut };
+  const outOfSampleRange = { tradeFrom: cut, tradeTo: rangeTo };
   const inResult = runBacktest({
     candles, strategy, params: mergedParams, symbol,
     options: { ...runOptions, ...inSampleRange }
@@ -207,6 +255,11 @@ async function executeRun({
         thresholds,
         failures,
         skips,
+        range: {
+          from: candles[rangeFrom]?.open_time ?? null,
+          to: candles[Math.max(rangeFrom, rangeTo - 1)]?.open_time ?? null,
+          bars: span
+        },
         costs: {
           spreadPrice: runOptions.spreadPrice ?? 0,
           slippagePrice: runOptions.slippagePrice ?? 0,
@@ -241,7 +294,14 @@ async function executeRun({
     );
   }
 
-  return { runId, metrics, walkForward, passed, failures, thresholds, skips, backfill, bars: candles.length };
+  return {
+    runId, metrics, walkForward, passed, failures, thresholds, skips, backfill,
+    bars: span,
+    range: {
+      from: candles[rangeFrom]?.open_time ?? null,
+      to: candles[Math.max(rangeFrom, rangeTo - 1)]?.open_time ?? null
+    }
+  };
 }
 
 async function listRuns({ limit = 25 } = {}) {
@@ -284,41 +344,52 @@ async function getRun(runId) {
  * they were actually after.
  */
 async function sweep({
+  symbolIds,
   symbolId,
   strategyNames,
   timeframes,
   params = {},
   options = {},
   bridge = null,
-  backfillBars = 2000
+  backfillBars = 2000,
+  onProgress = null
 }) {
+  const symbols = symbolIds && symbolIds.length ? symbolIds : [symbolId];
   const results = [];
+  const total = symbols.length * strategyNames.length * timeframes.length;
+  let done = 0;
 
-  for (const strategyName of strategyNames) {
-    for (const timeframe of timeframes) {
-      try {
-        const run = await executeRun({
-          strategyName, symbolId, timeframe, params, options, bridge, backfillBars
-        });
-        results.push({
-          strategyName,
-          timeframe,
-          ok: true,
-          runId: run.runId,
-          passed: run.passed,
-          failures: run.failures,
-          skips: run.skips,
-          outOfSample: run.walkForward.outOfSample,
-          bars: run.bars
-        });
-      } catch (error) {
-        results.push({ strategyName, timeframe, ok: false, error: error.message });
+  for (const sym of symbols) {
+    for (const strategyName of strategyNames) {
+      for (const timeframe of timeframes) {
+        try {
+          const run = await executeRun({
+            strategyName, symbolId: sym, timeframe, params, options, bridge, backfillBars
+          });
+          results.push({
+            symbolId: sym,
+            strategyName,
+            timeframe,
+            ok: true,
+            runId: run.runId,
+            passed: run.passed,
+            failures: run.failures,
+            skips: run.skips,
+            range: run.range,
+            outOfSample: run.walkForward.outOfSample,
+            bars: run.bars
+          });
+        } catch (error) {
+          results.push({ symbolId: sym, strategyName, timeframe, ok: false, error: error.message });
+        }
+        done += 1;
+        if (onProgress) onProgress({ done, total, symbolId: sym, strategyName, timeframe });
       }
     }
   }
 
   return {
-    symbolId,
+    symbolIds: symbols,
     combinations: results.length,
     passed: results.filter((r) => r.ok && r.passed).length,
     failed: results.filter((r) => r.ok && !r.passed).length,
@@ -327,4 +398,4 @@ async function sweep({
   };
 }
 
-module.exports = { executeRun, sweep, splitWalkForward, evaluateThresholds, listRuns, getRun };
+module.exports = { executeRun, sweep, tradeWindowFor, splitWalkForward, evaluateThresholds, listRuns, getRun };

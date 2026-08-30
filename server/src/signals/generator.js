@@ -3,6 +3,7 @@ const { getCandles } = require('../market/candles');
 const { getStrategy, mergeParams } = require('../strategies/registry');
 const { assessSignal } = require('../risk/engine');
 const { loadOperationsSettings } = require('../settings/operations');
+const { loadScopes, scopeAllows } = require('../strategies/scopes');
 
 const DEFAULT_TIMEFRAME = 'H1';
 const HISTORY_BARS = 500;
@@ -30,12 +31,13 @@ async function countOpenPositions(mode) {
  * which is what makes comparing their results meaningful.
  */
 async function generateForTimeframe({
-  mode, now, timeframe, strategies, symbols, autoApprove
+  mode, now, timeframe, strategies, symbols, autoApprove, scopes = new Map()
 }) {
 
   let evaluated = 0;
   let created = 0;
   let skipped = 0;
+  let outOfScope = 0;
 
   for (const strategyRow of strategies) {
     let strategy;
@@ -47,6 +49,13 @@ async function generateForTimeframe({
     }
 
     for (const symbol of symbols) {
+      // A strategy with no scope rows runs everywhere, so this only ever
+      // narrows a strategy someone has deliberately narrowed.
+      if (!scopeAllows(scopes, { strategyId: strategyRow.id, symbolId: symbol.id, timeframe })) {
+        outOfScope += 1;
+        continue;
+      }
+
       const candles = await getCandles({ symbolId: symbol.id, timeframe, limit: HISTORY_BARS });
       if (candles.length < 2) { skipped += 1; continue; }
 
@@ -100,7 +109,7 @@ async function generateForTimeframe({
     }
   }
 
-  return { evaluated, created, skipped };
+  return { evaluated, created, skipped, outOfScope };
 }
 
 /**
@@ -131,23 +140,28 @@ async function generateSignals({
 
   const strategies = await query('SELECT * FROM strategies WHERE enabled = 1');
   const symbols = await query('SELECT * FROM symbols WHERE enabled = 1');
+  const scopes = await loadScopes();
 
   const byTimeframe = {};
   let evaluated = 0;
   let created = 0;
   let skipped = 0;
+  let outOfScope = 0;
 
   for (const tf of active) {
     const result = await generateForTimeframe({
-      mode, now, timeframe: tf, strategies, symbols, autoApprove
+      mode, now, timeframe: tf, strategies, symbols, autoApprove, scopes
     });
     byTimeframe[tf] = result;
     evaluated += result.evaluated;
     created += result.created;
     skipped += result.skipped;
+    outOfScope += result.outOfScope;
   }
 
-  return { evaluated, created, skipped, autoApprove, timeframes: active, byTimeframe };
+  return {
+    evaluated, created, skipped, outOfScope, autoApprove, timeframes: active, byTimeframe
+  };
 }
 
 module.exports = { generateSignals, generateForTimeframe, countOpenPositions };

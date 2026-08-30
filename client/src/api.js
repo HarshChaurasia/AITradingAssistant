@@ -129,6 +129,13 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(patch)
     }),
+  strategyScopes: (id) => request(`/api/strategies/${id}/scopes`),
+  saveStrategyScopes: (id, scopes) =>
+    request(`/api/strategies/${id}/scopes`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scopes })
+    }),
   sweepBacktests: (payload) =>
     request('/api/backtests/sweep', {
       method: 'POST',

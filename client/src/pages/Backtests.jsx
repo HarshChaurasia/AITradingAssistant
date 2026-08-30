@@ -47,6 +47,17 @@ export default function Backtests() {
   const [commission, setCommission] = useState(7);
   const [result, setResult] = useState(null);
   const [sweepResult, setSweepResult] = useState(null);
+  const [sweepAllSymbols, setSweepAllSymbols] = useState(false);
+  // A year by default. The 50-trade minimum is the threshold most runs fail,
+  // and on an H4 chart fifty out-of-sample trades simply needs more history
+  // than a couple of thousand bars can hold.
+  const [from, setFrom] = useState(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [to, setTo] = useState('');
+  const [progress, setProgress] = useState(null);
   const [runs, setRuns] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -83,7 +94,9 @@ export default function Backtests() {
           startingBalance: Number(balance),
           riskPctPerTrade: Number(riskPct),
           spreadPrice: Number(spread),
-          commissionPerLot: Number(commission)
+          commissionPerLot: Number(commission),
+          from: from || undefined,
+          to: to || undefined
         }
       };
       setResult(await api.runBacktest(payload));
@@ -107,17 +120,26 @@ export default function Backtests() {
     setError(null);
     setSweepResult(null);
     try {
+      const targets = sweepAllSymbols
+        ? symbols.filter((s) => s.enabled || s.watched).map((s) => s.id)
+        : [symbolId];
+
+      setProgress(`running ${targets.length * TIMEFRAMES.length * strategies.length} combinations — this can take a few minutes`);
+
       const payload = {
-        symbolId,
+        symbolIds: targets,
         timeframes: TIMEFRAMES,
         options: {
           startingBalance: Number(balance),
           riskPctPerTrade: Number(riskPct),
           spreadPrice: Number(spread),
-          commissionPerLot: Number(commission)
+          commissionPerLot: Number(commission),
+          from: from || undefined,
+          to: to || undefined
         }
       };
       setSweepResult(await api.sweepBacktests(payload));
+      setProgress(null);
       setRuns(await api.backtests());
     } catch (e) {
       setError(e.message);
@@ -159,6 +181,22 @@ export default function Backtests() {
           <input type="number" step="0.5" value={commission} onChange={(e) => setCommission(e.target.value)} />
         </label>
 
+        <label className="field">from
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label className="field">to
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </label>
+
+        <label className="setting-toggle">
+          <input
+            type="checkbox"
+            checked={sweepAllSymbols}
+            onChange={(e) => setSweepAllSymbols(e.target.checked)}
+          />
+          <span><strong>sweep every watched symbol</strong></span>
+        </label>
+
         <button disabled={busy || !strategyName || !symbolId} onClick={run}>
           {busy ? 'Running…' : 'Run backtest'}
         </button>
@@ -168,11 +206,22 @@ export default function Backtests() {
         </button>
       </div>
 
+      {progress && <p className="muted">{progress}</p>}
+
       <p className="muted">
-        A timeframe with no stored candles is backfilled from the broker rather than reported as a
-        failure — that is what &quot;no candles stored, backfill first&quot; used to mean. A sweep is
-        sequential on purpose: firing six concurrent history requests at one MT5 terminal is how the
-        bridge stops answering.
+        <strong>Why runs fail on &quot;only N trades&quot;:</strong> the verdict is judged on
+        out-of-sample data only, which is the last 30% of the chosen window, and it demands 50
+        trades there before it will call anything an edge. A strategy taking one trade a week needs
+        roughly seven years of history to clear that on H4 — so the date range above matters more
+        than any parameter. Widen it, or lower the minimum in the backtest thresholds if you accept
+        a weaker claim.
+      </p>
+
+      <p className="muted">
+        Dates restrict where trades may be TAKEN, not what the indicators may see — a 200-bar EMA
+        still warms up from the bars before your start date, so the same bar produces the same value
+        it would have live. A timeframe with no stored candles is backfilled from the broker rather
+        than reported as a failure.
       </p>
 
       {error && <p className="error">{error}</p>}
@@ -227,7 +276,7 @@ export default function Backtests() {
           <table className="table">
             <thead>
               <tr>
-                <th>Strategy</th><th>TF</th><th>Trades</th><th>PF</th><th>Net</th>
+                <th>Symbol</th><th>Strategy</th><th>TF</th><th>Trades</th><th>PF</th><th>Net</th>
                 <th>Max DD</th><th>Bars</th><th>Verdict</th>
               </tr>
             </thead>
@@ -236,7 +285,8 @@ export default function Backtests() {
                 .sort((a, b) => (b.ok && b.passed ? 1 : 0) - (a.ok && a.passed ? 1 : 0)
                   || ((b.outOfSample?.profitFactor ?? 0) - (a.outOfSample?.profitFactor ?? 0)))
                 .map((r) => (
-                  <tr key={`${r.strategyName}-${r.timeframe}`}>
+                  <tr key={`${r.symbolId}-${r.strategyName}-${r.timeframe}`}>
+                    <td>{symbols.find((s) => s.id === r.symbolId)?.broker_symbol ?? r.symbolId}</td>
                     <td>{r.strategyName}</td>
                     <td>{r.timeframe}</td>
                     <td>{r.ok ? r.outOfSample.trades : '—'}</td>

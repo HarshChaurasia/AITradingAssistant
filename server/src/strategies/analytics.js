@@ -93,6 +93,52 @@ async function liveByStrategyTimeframe({ mode = 'demo' } = {}) {
 }
 
 /**
+ * The same figures again, split by symbol instead of timeframe.
+ *
+ * A strategy that works on BTCUSD and loses on EURUSD reads as mediocre when
+ * the two are pooled. Splitting both ways is the only way to see which half
+ * of the average is carrying the other.
+ */
+async function liveByStrategySymbol({ mode = 'demo' } = {}) {
+  const rows = await query(
+    `SELECT st.name           AS strategy,
+            sym.broker_symbol AS symbol,
+            COUNT(DISTINCT sig.id)                                          AS signals,
+            COUNT(DISTINCT CASE WHEN sig.status = 'rejected' THEN sig.id END) AS rejected,
+            COUNT(DISTINCT CASE WHEN t.status = 'CLOSED' THEN t.id END)     AS tradesClosed,
+            COUNT(DISTINCT CASE WHEN t.status = 'OPEN' THEN t.id END)       AS tradesOpen,
+            COUNT(DISTINCT CASE WHEN t.status = 'CLOSED' AND t.pnl > 0 THEN t.id END)  AS wins,
+            COUNT(DISTINCT CASE WHEN t.status = 'CLOSED' AND t.pnl <= 0 THEN t.id END) AS losses,
+            COALESCE(SUM(CASE WHEN t.status = 'CLOSED' THEN t.pnl END), 0)  AS pnl
+       FROM signals sig
+       JOIN strategies st ON st.id = sig.strategy_id
+       JOIN symbols sym   ON sym.id = sig.symbol_id
+       LEFT JOIN trades t ON t.signal_id = sig.id AND t.mode = sig.mode
+      WHERE sig.mode = ?
+      GROUP BY st.name, sym.broker_symbol
+      ORDER BY st.name, sym.broker_symbol`,
+    [mode]
+  );
+
+  return rows.map((r) => {
+    const closed = Number(r.tradesClosed);
+    return {
+      strategy: r.strategy,
+      symbol: r.symbol,
+      signals: Number(r.signals),
+      rejected: Number(r.rejected),
+      tradesClosed: closed,
+      tradesOpen: Number(r.tradesOpen),
+      wins: Number(r.wins),
+      losses: Number(r.losses),
+      pnl: Number(Number(r.pnl).toFixed(2)),
+      winRatePct: ratio(Number(r.wins), closed),
+      expectancy: closed > 0 ? Number((Number(r.pnl) / closed).toFixed(2)) : null
+    };
+  });
+}
+
+/**
  * Every backtest verdict, keyed by strategy, symbol and timeframe.
  *
  * Only the newest run for each combination is reported. Older runs are the
@@ -138,10 +184,16 @@ async function backtestMatrix() {
 async function strategyAnalytics({ mode = 'demo' } = {}) {
   const registered = await query('SELECT * FROM strategies ORDER BY name');
   const live = await liveByStrategyTimeframe({ mode });
+  const perSymbol = await liveByStrategySymbol({ mode });
   const matrix = await backtestMatrix();
+  const scopes = await query(
+    `SELECT sc.strategy_id, sc.symbol_id, sc.timeframe, sym.broker_symbol
+       FROM strategy_scopes sc LEFT JOIN symbols sym ON sym.id = sc.symbol_id`
+  );
 
   const strategies = registered.map((row) => {
     const mine = live.filter((l) => l.strategy === row.name);
+    const mineBySymbol = perSymbol.filter((l) => l.strategy === row.name);
     const runs = matrix.filter((m) => m.strategy === row.name);
     const closed = mine.reduce((n, l) => n + l.tradesClosed, 0);
     const wins = mine.reduce((n, l) => n + l.wins, 0);
@@ -154,6 +206,12 @@ async function strategyAnalytics({ mode = 'demo' } = {}) {
       enabled: row.enabled === 1,
       params: row.params,
       byTimeframe: mine,
+      bySymbol: mineBySymbol,
+      // An empty list means "runs everywhere", which is the default and is a
+      // different statement from "runs nowhere".
+      scopes: scopes
+        .filter((sc) => sc.strategy_id === row.id)
+        .map((sc) => ({ symbolId: sc.symbol_id, symbol: sc.broker_symbol, timeframe: sc.timeframe })),
       totals: {
         signals: mine.reduce((n, l) => n + l.signals, 0),
         rejected: mine.reduce((n, l) => n + l.rejected, 0),
@@ -173,6 +231,9 @@ async function strategyAnalytics({ mode = 'demo' } = {}) {
       // than total P&L: total rewards whichever timeframe simply traded most,
       // which is not the same as the one that traded best.
       bestTimeframe: mine
+        .filter((l) => l.tradesClosed > 0)
+        .sort((a, b) => (b.expectancy ?? -Infinity) - (a.expectancy ?? -Infinity))[0] || null,
+      bestSymbol: mineBySymbol
         .filter((l) => l.tradesClosed > 0)
         .sort((a, b) => (b.expectancy ?? -Infinity) - (a.expectancy ?? -Infinity))[0] || null,
       backtests: {
@@ -234,7 +295,30 @@ async function strategyAnalytics({ mode = 'demo' } = {}) {
     }))
     .sort((a, b) => (b.expectancy ?? -Infinity) - (a.expectancy ?? -Infinity));
 
-  return { mode, strategies, matrix, byTimeframe };
+  const symbolBuckets = new Map();
+  for (const row of perSymbol) {
+    const bucket = symbolBuckets.get(row.symbol) || {
+      symbol: row.symbol, signals: 0, rejected: 0, tradesClosed: 0, wins: 0, losses: 0, pnl: 0
+    };
+    bucket.signals += row.signals;
+    bucket.rejected += row.rejected;
+    bucket.tradesClosed += row.tradesClosed;
+    bucket.wins += row.wins;
+    bucket.losses += row.losses;
+    bucket.pnl += row.pnl;
+    symbolBuckets.set(row.symbol, bucket);
+  }
+
+  const bySymbol = [...symbolBuckets.values()]
+    .map((b) => ({
+      ...b,
+      pnl: Number(b.pnl.toFixed(2)),
+      winRatePct: ratio(b.wins, b.tradesClosed),
+      expectancy: b.tradesClosed > 0 ? Number((b.pnl / b.tradesClosed).toFixed(2)) : null
+    }))
+    .sort((a, b) => (b.expectancy ?? -Infinity) - (a.expectancy ?? -Infinity));
+
+  return { mode, strategies, matrix, byTimeframe, bySymbol };
 }
 
 async function setStrategyEnabled(id, enabled) {
@@ -257,6 +341,7 @@ async function setStrategyStatus(id, status) {
 module.exports = {
   strategyAnalytics,
   liveByStrategyTimeframe,
+  liveByStrategySymbol,
   backtestMatrix,
   setStrategyEnabled,
   setStrategyStatus,

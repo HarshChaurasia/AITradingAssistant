@@ -816,3 +816,17 @@ button {
   color: var(--bg);
   background: var(--blue);
 }
+
+.scope-grid td, .scope-grid th {
+  text-align: center;
+}
+
+.scope-grid td:first-child, .scope-grid th:first-child {
+  text-align: left;
+}
+
+.scope-grid input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--green);
+}

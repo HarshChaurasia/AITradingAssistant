@@ -190,7 +190,83 @@ function superTrend(candles, period, multiplier) {
   return { trend, band };
 }
 
+
+/**
+ * Confirmed swing highs and lows (fractal pivots).
+ *
+ * A bar is a swing high when its high exceeds every high within `lookback`
+ * bars either side. That definition needs bars AFTER the pivot, so a swing is
+ * only knowable `lookback` bars later - and this returns it at the index where
+ * it became knowable, never at the pivot itself.
+ *
+ * Publishing it at the pivot would be lookahead: the strategy would see a top
+ * at the exact bar it formed, which nobody can do in real time. That single
+ * detail is the difference between a market-structure strategy and a fiction.
+ *
+ * Each element is the price of the most recent CONFIRMED swing as at that bar,
+ * plus the index it occurred on, or null before one exists.
+ */
+function swings(candles, lookback = 2) {
+  const highs = new Array(candles.length).fill(null);
+  const lows = new Array(candles.length).fill(null);
+
+  let lastHigh = null;
+  let lastLow = null;
+
+  for (let i = 0; i < candles.length; i += 1) {
+    // The pivot that could just have been confirmed by bar i.
+    const p = i - lookback;
+    if (p >= lookback) {
+      let isHigh = true;
+      let isLow = true;
+      for (let k = p - lookback; k <= p + lookback; k += 1) {
+        if (k === p) continue;
+        if (candles[k].high >= candles[p].high) isHigh = false;
+        if (candles[k].low <= candles[p].low) isLow = false;
+      }
+      if (isHigh) lastHigh = { index: p, price: candles[p].high };
+      if (isLow) lastLow = { index: p, price: candles[p].low };
+    }
+
+    highs[i] = lastHigh;
+    lows[i] = lastLow;
+  }
+
+  return { highs, lows };
+}
+
+/**
+ * Fair value gaps: a three-bar imbalance where the middle bar moved so fast
+ * that bar i-2 and bar i never traded through the same prices.
+ *
+ * Bullish when the low of bar i sits above the high of bar i-2 - the gap
+ * between them is a band of prices the market skipped, and the premise of the
+ * concept is that it tends to be revisited.
+ *
+ * Recorded at bar i, which is the first bar at which the gap is complete.
+ */
+function fairValueGaps(candles) {
+  const bullish = new Array(candles.length).fill(null);
+  const bearish = new Array(candles.length).fill(null);
+
+  let lastBull = null;
+  let lastBear = null;
+
+  for (let i = 0; i < candles.length; i += 1) {
+    if (i >= 2) {
+      const a = candles[i - 2];
+      const c = candles[i];
+      if (c.low > a.high) lastBull = { index: i, from: a.high, to: c.low };
+      if (c.high < a.low) lastBear = { index: i, from: c.high, to: a.low };
+    }
+    bullish[i] = lastBull;
+    bearish[i] = lastBear;
+  }
+
+  return { bullish, bearish };
+}
+
 module.exports = {
   sma, ema, rsi, atr, highest, lowest, donchian, trueRange,
-  stddev, bollinger, macd, superTrend
+  stddev, bollinger, macd, superTrend, swings, fairValueGaps
 };

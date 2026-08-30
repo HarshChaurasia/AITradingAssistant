@@ -6,6 +6,7 @@ const {
   strategyAnalytics, setStrategyEnabled, setStrategyStatus, STATUSES
 } = require('../strategies/analytics');
 const { loadOperationsSettings, TIMEFRAMES } = require('../settings/operations');
+const { setScopes, listScopes } = require('../strategies/scopes');
 
 function createBacktestRouter({ bridge = null } = {}) {
   const router = express.Router();
@@ -15,6 +16,43 @@ function createBacktestRouter({ bridge = null } = {}) {
       // Registering is idempotent and keeps the table in step with the code.
       await registerStrategies();
       res.json(await listStrategies());
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Narrow a strategy to particular symbols and timeframes.
+   *
+   * An empty list CLEARS the scope, which restores "runs everywhere" rather
+   * than switching the strategy off. Turning it off is what `enabled` does,
+   * and conflating the two would make an accidental deselection look like a
+   * working strategy that had quietly stopped.
+   */
+  router.put('/strategies/:id/scopes', async (req, res, next) => {
+    try {
+      const id = Number(req.params.id);
+      const rows = await listStrategies();
+      if (!rows.some((s) => s.id === id)) {
+        return res.status(404).json({ error: `unknown strategy ${id}` });
+      }
+
+      const entries = Array.isArray(req.body?.scopes) ? req.body.scopes : [];
+      for (const entry of entries) {
+        if (entry.timeframe && !TIMEFRAMES.includes(entry.timeframe)) {
+          return res.status(400).json({ error: `timeframe must be one of ${TIMEFRAMES.join(', ')}` });
+        }
+      }
+
+      res.json(await setScopes(id, entries));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/strategies/:id/scopes', async (req, res, next) => {
+    try {
+      res.json(await listScopes(Number(req.params.id)));
     } catch (error) {
       next(error);
     }
@@ -108,8 +146,11 @@ function createBacktestRouter({ bridge = null } = {}) {
    */
   router.post('/backtests/sweep', async (req, res, next) => {
     try {
-      const { symbolId, strategyNames, timeframes, params = {}, options = {} } = req.body || {};
-      if (!symbolId) return res.status(400).json({ error: 'symbolId is required' });
+      const { symbolId, symbolIds, strategyNames, timeframes, params = {}, options = {} } = req.body || {};
+      const targets = Array.isArray(symbolIds) && symbolIds.length
+        ? symbolIds
+        : (symbolId ? [symbolId] : null);
+      if (!targets) return res.status(400).json({ error: 'symbolId or symbolIds is required' });
 
       await registerStrategies();
       const all = await listStrategies();
@@ -125,7 +166,7 @@ function createBacktestRouter({ bridge = null } = {}) {
 
       const { backfillBars } = await loadOperationsSettings();
       res.json(await sweep({
-        symbolId, strategyNames: names, timeframes: chosen, params, options, bridge, backfillBars
+        symbolIds: targets, strategyNames: names, timeframes: chosen, params, options, bridge, backfillBars
       }));
     } catch (error) {
       if (/unknown symbolId|unknown strategy/i.test(error.message)) {

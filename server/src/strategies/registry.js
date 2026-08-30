@@ -6,6 +6,9 @@ const macdTrend = require('./macd-trend');
 const bollingerSqueeze = require('./bollinger-squeeze');
 const superTrendFlip = require('./supertrend');
 const maCrossover = require('./ma-crossover');
+const smartMoney = require('./smart-money');
+const liquiditySweep = require('./liquidity-sweep');
+const rsiDivergence = require('./rsi-divergence');
 
 const strategies = [
   trendBreakout,
@@ -13,6 +16,15 @@ const strategies = [
   macdTrend,
   bollingerSqueeze,
   superTrendFlip,
+  // Market structure: a break of structure followed by a retrace into the
+  // imbalance the move left behind.
+  smartMoney,
+  // The mirror image of trend-breakout: it buys the FAILURE of a break. Added
+  // deliberately - the existing book all fires long together, and correlated
+  // agreement is what turned one adverse move into seven simultaneous losers.
+  liquiditySweep,
+  // Buys exhaustion rather than strength, which is a different family again.
+  rsiDivergence,
   // A deliberate baseline. If a more elaborate strategy cannot beat the oldest
   // trend rule there is, the elaboration is not earning its complexity.
   maCrossover
