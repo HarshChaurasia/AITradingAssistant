@@ -2,6 +2,7 @@ const { query } = require('../db/pool');
 const { optimiseStrategy } = require('./optimiser');
 const { recordStudy } = require('../strategies/promotions');
 const { searchSpaceFor } = require('./search-space');
+const { registerStrategies } = require('../strategies/registry');
 
 /**
  * The research loop, run over a whole grid.
@@ -64,6 +65,15 @@ async function runLab({
   isCancelled = () => false,
   logger = console
 } = {}) {
+  /**
+   * A study is recorded against a strategies row, so a strategy that ships in
+   * code but has never been registered fails at the final insert - AFTER its
+   * search has burned minutes of CPU. Registering here costs one idempotent
+   * upsert and makes every caller safe, not just the HTTP route that happened
+   * to remember.
+   */
+  await registerStrategies();
+
   const strategies = strategyNames && strategyNames.length
     ? strategyNames
     : (await query('SELECT name FROM strategies WHERE enabled = 1 AND superseded_at IS NULL'))

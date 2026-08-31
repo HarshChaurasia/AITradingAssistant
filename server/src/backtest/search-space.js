@@ -76,6 +76,24 @@ const SPACES = {
     swingLookback: [3, 5],
     requireTrendAlignment: [true, false]
   },
+  'volume-thrust': {
+    ...EXITS,
+    // The two numbers that define what counts as participation. Both have a
+    // mechanism: a lower multiple fires more often on ordinary bars, a higher
+    // body fraction demands a more decisive close.
+    volumeMultiple: [1.5, 2.0, 3.0],
+    minBodyFraction: [0.4, 0.6, 0.75]
+  },
+  'session-breakout': {
+    ...EXITS,
+    // How much range to build before a break counts, and how long the setup
+    // stays live afterwards. The session hour is deliberately NOT searched:
+    // sweeping it would find whichever hour happened to work on this data,
+    // which is the definition of fitting the sample.
+    openingBars: [2, 4, 8],
+    windowBars: [8, 16, 32],
+    breakBuffer: [0, 0.1, 0.25]
+  },
   // The scalps hold on a clock as well as on price, so the clock is part of
   // the search: a strategy exiting mostly on time is not reaching its target,
   // and the fix is either more time or a nearer target.

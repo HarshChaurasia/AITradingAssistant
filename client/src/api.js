@@ -148,6 +148,21 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ scopes })
     }),
+  // The strategy lab: parameter search, judged on data the search never saw.
+  labStudies: (params = '') => request(`/api/lab/studies${params}`),
+  startLabStudy: (payload) =>
+    request('/api/lab/studies', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }),
+  cancelLabStudy: () => request('/api/lab/studies/cancel', { method: 'POST' }),
+  promoteStudy: (id) => request(`/api/lab/studies/${id}/promote`, { method: 'POST' }),
+  revokePromotion: (id, note) =>
+    request(`/api/lab/promotions/${id}/revoke`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ note })
+    }),
+
   sweepBacktests: (payload) =>
     request('/api/backtests/sweep', {
       method: 'POST',

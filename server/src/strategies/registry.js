@@ -11,6 +11,8 @@ const liquiditySweep = require('./liquidity-sweep');
 const rsiDivergence = require('./rsi-divergence');
 const microBreakout = require('./micro-breakout');
 const stretchFade = require('./stretch-fade');
+const volumeThrust = require('./volume-thrust');
+const sessionBreakout = require('./session-breakout');
 
 const strategies = [
   trendBreakout,
@@ -32,6 +34,14 @@ const strategies = [
   // to work - measured, not assumed.
   microBreakout,
   stretchFade,
+  // The only strategy that reads anything other than price: tick volume, so a
+  // move made on ordinary participation can be told apart from one that took
+  // real activity to produce.
+  volumeThrust,
+  // The only strategy that reads the clock. The range built in the hour after
+  // the London open is a level the rest of the day trades around, and
+  // breaking it is a different event from breaking an arbitrary 20-bar high.
+  sessionBreakout,
   // A deliberate baseline. If a more elaborate strategy cannot beat the oldest
   // trend rule there is, the elaboration is not earning its complexity.
   maCrossover

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Markets from './pages/Markets';
 import Backtests from './pages/Backtests';
+import Lab from './pages/Lab';
 import Signals from './pages/Signals';
 import Risk from './pages/Risk';
 import Trades from './pages/Trades';
@@ -39,6 +40,7 @@ function App() {
           <button className={view === 'strategies' ? 'nav active' : 'nav'} onClick={() => setView('strategies')}>Strategies</button>
           <button className={view === 'scalping' ? 'nav active' : 'nav'} onClick={() => setView('scalping')}>Scalping</button>
           <button className={view === 'backtests' ? 'nav active' : 'nav'} onClick={() => setView('backtests')}>Backtests</button>
+          <button className={view === 'lab' ? 'nav active' : 'nav'} onClick={() => setView('lab')}>Strategy Lab</button>
           <button className={view === 'execution' ? 'nav active' : 'nav'} onClick={() => setView('execution')}>Execution</button>
           <button className={view === 'risk' ? 'nav active' : 'nav'} onClick={() => setView('risk')}>Risk</button>
           <button className={view === 'settings' ? 'nav active' : 'nav'} onClick={() => setView('settings')}>Settings</button>
@@ -61,6 +63,7 @@ function App() {
 
         {view === 'markets' ? <Markets />
           : view === 'backtests' ? <Backtests />
+          : view === 'lab' ? <Lab />
           : view === 'scanner' ? <Scanner />
           : view === 'signals' ? <Signals />
           : view === 'missed' ? <Missed />

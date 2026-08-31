@@ -14,12 +14,23 @@ const { strategies } = require('../src/strategies/registry');
 // A series with trends both ways, pullbacks, and genuine breakouts, so every
 // strategy actually fires somewhere across it.
 //
-// The bar RANGE has to vary as well as the closes. The scalping strategies key
-// off a bar being much larger than the recent average, and a series of
-// uniformly sized bars never produces one - which the vacuous-fixture guard
-// below caught the moment micro-breakout was added.
+// Three things beyond the closes have to vary, each added because the
+// vacuous-fixture guard below caught a strategy that could never fire:
+//
+//   BAR RANGE   - the scalps key off a bar much larger than the recent
+//                 average, and uniformly sized bars never produce one.
+//   TICK VOLUME - volume-thrust reads participation, and a constant volume
+//                 column is never two times its own average.
+//   open_time   - session-breakout reads the clock. Without real timestamps
+//                 it cannot find a session at all, and the whole strategy
+//                 would be tested vacuously.
+//
+// The bars are 15 minutes apart from a midnight UTC start, so 07:00 - the
+// default session hour - falls on bar 28 of each day and recurs every 96.
 function varietySeries(length = 900) {
   const candles = [];
+  const start = Date.UTC(2026, 0, 5, 0, 0, 0);
+
   for (let i = 0; i < length; i += 1) {
     const drift = i < length / 2 ? i * 0.05 : (length - i) * 0.05;
     const wave = Math.sin(i / 7) * 1.5 + Math.sin(i / 23) * 3;
@@ -31,11 +42,27 @@ function varietySeries(length = 900) {
     const half = burst ? 0.9 : 0.08;
     const direction = Math.sin(i / 7) >= 0 ? 1 : -1;
 
+    // A burst bar carries the volume to match - participation and range move
+    // together in real data, and a fixture where they did not would let a
+    // volume strategy pass on a series it could never trade.
+    const baseVolume = 400 + Math.round(Math.sin(i / 31) * 120);
+
+    // A burst bar opens at one end and closes near the other, with small
+    // wicks - a decisive bar, which is what a momentum strategy is looking
+    // for. Giving it a large range but a mid-range close would produce a bar
+    // that LOOKS violent and that volume-thrust correctly refuses, so the
+    // fixture would test nothing.
+    const body = burst ? half * 2.6 : 0.03;
+    const wick = burst ? half * 0.25 : half;
+    const open = burst ? close - direction * body : close - 0.03;
+
     candles.push({
-      open: close - 0.03,
-      high: close + (burst ? half * (direction > 0 ? 1.6 : 0.4) : half),
-      low: close - (burst ? half * (direction > 0 ? 0.4 : 1.6) : half),
-      close
+      open_time: new Date(start + i * 15 * 60000).toISOString(),
+      open,
+      high: Math.max(open, close) + wick,
+      low: Math.min(open, close) - wick,
+      close,
+      tick_volume: burst ? baseVolume * 4 : baseVolume
     });
   }
   return candles;
