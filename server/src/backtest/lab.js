@@ -74,9 +74,18 @@ async function runLab({
    */
   await registerStrategies();
 
+  /**
+   * EVERY registered strategy, enabled or not.
+   *
+   * `enabled` is the lab's OUTPUT - a strategy trades because a combination
+   * of it passed here. Taking it as the input too would close the loop the
+   * wrong way round: disabling everything, which is the correct starting
+   * state, would leave the lab with nothing to study and nothing could ever
+   * earn its way back in.
+   */
   const strategies = strategyNames && strategyNames.length
     ? strategyNames
-    : (await query('SELECT name FROM strategies WHERE enabled = 1 AND superseded_at IS NULL'))
+    : (await query('SELECT name FROM strategies WHERE superseded_at IS NULL'))
       .map((r) => r.name);
 
   // A strategy with nothing to vary cannot be studied, and saying so up front

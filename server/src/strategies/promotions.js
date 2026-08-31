@@ -80,16 +80,26 @@ async function promoteFromStudy(studyId, { promotedBy = 'system', force = false 
     throw new Error(`study ${studyId} is not promotable: ${why}`);
   }
 
+  /**
+   * Lands at the BACKTEST stage, not in service.
+   *
+   * The lab searched - up to four hundred candidates - so its holdout was
+   * reached after a great deal of selection. A confirmation run follows:
+   * these exact parameters, fixed, walked forward across the whole period
+   * with no search in it at all. Only that promotes to `enabled`.
+   */
   await query(
     `INSERT INTO strategy_promotions
-       (strategy_id, symbol_id, timeframe, params, study_id, validate_pf, holdout_pf,
+       (strategy_id, symbol_id, timeframe, stage, params, study_id, validate_pf, holdout_pf,
         trials, promoted_at, promoted_by)
-     VALUES (?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, UTC_TIMESTAMP(), ?)
+     VALUES (?, ?, ?, 'backtest', CAST(? AS JSON), ?, ?, ?, ?, UTC_TIMESTAMP(), ?)
      ON DUPLICATE KEY UPDATE
+       stage = 'backtest',
        params = VALUES(params), study_id = VALUES(study_id),
        validate_pf = VALUES(validate_pf), holdout_pf = VALUES(holdout_pf),
        trials = VALUES(trials), promoted_at = VALUES(promoted_at),
        promoted_by = VALUES(promoted_by),
+       confirmation_run_id = NULL, demoted_at = NULL, demote_reason = NULL,
        revoked_at = NULL, revoked_note = NULL`,
     [
       study.strategy_id,
@@ -115,10 +125,11 @@ async function revokePromotion(id, { note = null } = {}) {
   return listPromotions({ includeRevoked: true });
 }
 
-async function listPromotions({ strategyId = null, includeRevoked = false } = {}) {
+async function listPromotions({ strategyId = null, includeRevoked = false, stage = null } = {}) {
   const where = [];
   const params = [];
   if (!includeRevoked) where.push('p.revoked_at IS NULL');
+  if (stage) { where.push('p.stage = ?'); params.push(stage); }
   if (strategyId) { where.push('p.strategy_id = ?'); params.push(strategyId); }
 
   return query(
@@ -140,7 +151,8 @@ async function listPromotions({ strategyId = null, includeRevoked = false } = {}
  */
 async function loadPromotedKeys() {
   const rows = await query(
-    'SELECT strategy_id, symbol_id, timeframe FROM strategy_promotions WHERE revoked_at IS NULL'
+    `SELECT strategy_id, symbol_id, timeframe FROM strategy_promotions
+      WHERE stage = 'enabled' AND revoked_at IS NULL`
   );
   return new Set(rows.map((r) => `${r.strategy_id}|${r.symbol_id}|${r.timeframe}`));
 }
@@ -159,7 +171,7 @@ async function loadPromotedParams() {
   const rows = await query(
     `SELECT strategy_id, symbol_id, timeframe, params
        FROM strategy_promotions
-      WHERE revoked_at IS NULL`
+      WHERE stage = 'enabled' AND revoked_at IS NULL`
   );
   return new Map(
     rows.map((r) => [`${r.strategy_id}|${r.symbol_id}|${r.timeframe}`, r.params])

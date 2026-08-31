@@ -227,6 +227,42 @@ async function alertDaySummary({
   await safely(send, lines.join('\n'), logger);
 }
 
+/**
+ * A combination entering or leaving service.
+ *
+ * Worth a message because it changes what the account will do next without
+ * anyone touching it: a strategy that was not trading an hour ago starts, or
+ * one that was stops. Both are the sort of thing you want to hear about
+ * before you notice it in the trade list.
+ */
+async function alertLifecycle({
+  stage, strategy, symbol, timeframe, detail, params = null,
+  send = sendAlert, logger = console
+}) {
+  const heading = stage === 'enabled'
+    ? `ENABLED ${strategy} on ${symbol} ${timeframe}`
+    : `DEMOTED ${strategy} on ${symbol} ${timeframe}`;
+
+  const lines = [heading];
+  if (detail) lines.push(detail);
+
+  // The numbers it will actually trade with. A promotion is evidence about a
+  // specific parameter set, and naming them is what makes the claim checkable.
+  if (params) {
+    const shown = Object.entries(params)
+      .filter(([k]) => /atr(Stop|Target)Multiple|maxHoldBars/.test(k))
+      .map(([k, v]) => `${k.replace('atr', '').replace('Multiple', '').toLowerCase()} ${v}`)
+      .join(', ');
+    if (shown) lines.push(`parameters: ${shown}`);
+  }
+
+  lines.push(stage === 'enabled'
+    ? 'it will trade this symbol and timeframe only'
+    : 'back to research; it will not trade until it passes again');
+
+  await safely(send, lines.join('\n'), logger);
+}
+
 async function alertDailyLossCap({ mode, realized, cap, send = sendAlert, logger = console }) {
   await safely(
     send,
@@ -289,6 +325,7 @@ module.exports = {
   alertOrderFailed,
   alertTradeClosed,
   alertDaySummary,
+  alertLifecycle,
   alertDailyLossCap,
   alertOpportunity
 };

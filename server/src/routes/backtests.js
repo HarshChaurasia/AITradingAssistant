@@ -11,6 +11,9 @@ const { createLabJob } = require('../backtest/lab');
 const {
   listStudies, listPromotions, promoteFromStudy, revokePromotion
 } = require('../strategies/promotions');
+const {
+  listLifecycle, confirmCombination, confirmPending, reviewLivePerformance
+} = require('../strategies/lifecycle');
 
 function createBacktestRouter({ bridge = null } = {}) {
   // One lab job per server. Two grids at once would fight for the same CPU
@@ -251,6 +254,51 @@ function createBacktestRouter({ bridge = null } = {}) {
       if (/not promotable|unknown study/i.test(error.message)) {
         return res.status(400).json({ error: error.message });
       }
+      next(error);
+    }
+  });
+
+  /**
+   * Where every combination stands: research, backtest, enabled, demoted.
+   */
+  router.get('/lab/lifecycle', async (req, res, next) => {
+    try {
+      res.json(await listLifecycle());
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Run the confirmation: the promoted parameters, fixed, over the whole
+   * period with no search. Passing it is what enables a combination.
+   */
+  router.post('/lab/promotions/:id/confirm', async (req, res, next) => {
+    try {
+      res.json(await confirmCombination(Number(req.params.id), {
+        bridge,
+        actor: req.user?.username || 'operator'
+      }));
+    } catch (error) {
+      if (/unknown promotion/i.test(error.message)) {
+        return res.status(404).json({ error: error.message });
+      }
+      next(error);
+    }
+  });
+
+  router.post('/lab/confirm-pending', async (req, res, next) => {
+    try {
+      res.json(await confirmPending({ bridge }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/lab/review-live', async (req, res, next) => {
+    try {
+      res.json(await reviewLivePerformance({ mode: req.body?.mode || 'demo' }));
+    } catch (error) {
       next(error);
     }
   });

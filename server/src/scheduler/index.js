@@ -11,6 +11,7 @@ const { evaluateMissedSignals } = require('../signals/missed');
 const { refreshMarketStatus, watchedSymbols } = require('../market/market-hours');
 const { syncCalendar } = require('../news/calendar');
 const { scopeOnlyTimeframeNames } = require('../strategies/scopes');
+const { confirmPending, reviewLivePerformance } = require('../strategies/lifecycle');
 
 /**
  * Periodic candle sync followed by signal generation.
@@ -31,6 +32,8 @@ function createScheduler({
   // re-read every tick so a dashboard change lands without a restart.
   timeframes = null,
   syncCandlesFn = syncCandles,
+  confirmPendingFn = confirmPending,
+  reviewLiveFn = reviewLivePerformance,
   listSymbolsFn = listSymbols,
   generateSignalsFn = generateSignals,
   expireStaleSignalsFn = expireStaleSignals,
@@ -166,6 +169,27 @@ function createScheduler({
       mode
     });
 
+    /**
+     * Move the lifecycle along.
+     *
+     * Confirmation first: a combination sitting at `backtest` has passed the
+     * lab and is waiting on a fixed-parameter run before it may trade, and
+     * leaving it waiting for a human is how an automated loop stops being
+     * one. Then the reverse direction - live results are checked against the
+     * demotion threshold, so a combination that stops working leaves service
+     * without anyone noticing it first.
+     *
+     * Both are wrapped: neither is worth failing a trading cycle over.
+     */
+    let lifecycle = null;
+    try {
+      const confirmed = await confirmPendingFn({ bridge, logger });
+      const reviewed = await reviewLiveFn({ mode, logger });
+      lifecycle = { ...confirmed, ...reviewed };
+    } catch (error) {
+      logger.error(`lifecycle step failed: ${error.message}`);
+    }
+
     // Grade the setups we refused against the candles that have arrived since.
     // Cheap - it only touches signals with no verdict yet - and it is the only
     // thing that turns a rejection into something we can learn from.
@@ -190,6 +214,7 @@ function createScheduler({
       bridgeDown: false,
       diskFreeGb: disk.freeGb,
       timeframes: activeTimeframes,
+      lifecycle,
       autoTrade: settings.autoTradeEnabled,
       symbolsSynced, marketsChecked, calendar, signals, execution, reconciliation, expired, missed
     };

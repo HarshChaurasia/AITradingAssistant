@@ -200,9 +200,18 @@ test('a study that cleared both windows promotes, and the promotion pins its par
   const promotions = await promoteFromStudy(studyId, { promotedBy: 'test' });
   assert.equal(promotions.length, 1);
   assert.equal(promotions[0].timeframe, 'H1');
+  // Promotion lands at the BACKTEST stage. The lab searched, so its holdout
+  // was reached after heavy selection; a confirmation run with no search in
+  // it at all is what actually puts a combination into service.
+  assert.equal(promotions[0].stage, 'backtest');
   assert.deepEqual(promotions[0].params, { atrStopMultiple: 2.75, atrTargetMultiple: 4 },
     'the numbers are promoted, not just the name - the same code with a different stop is a different bet');
   assert.equal(Number(promotions[0].trials), 216, 'the trial count travels with the claim');
+
+  // Nothing trades until the stage advances - the whole point of the extra
+  // step, and the reason this asserts false before it asserts true.
+  assert.equal((await loadPromotedKeys()).size, 0, 'awaiting confirmation is not permission to trade');
+  await query("UPDATE strategy_promotions SET stage = 'enabled' WHERE id = ?", [promotions[0].id]);
 
   const promoted = await loadPromotedKeys();
   assert.equal(
@@ -264,7 +273,8 @@ test('the generator trades the parameters a promotion was earned with', async (t
     holdoutPassed: true,
     promotable: true
   });
-  await promoteFromStudy(studyId);
+  const [promotion] = await promoteFromStudy(studyId);
+  await query("UPDATE strategy_promotions SET stage = 'enabled' WHERE id = ?", [promotion.id]);
 
   const promoted = await loadPromotedParams();
   const params = promoted.get(`${strategy.id}|${symbol.id}|H1`);

@@ -601,7 +601,10 @@ test('a promoted combination trades, and only on the timeframe it was promoted f
     holdoutPassed: true,
     promotable: true
   });
-  await promoteFromStudy(studyId);
+  const [promotion] = await promoteFromStudy(studyId);
+  // A promotion awaiting confirmation is not permission to trade, so the
+  // stage is advanced here - the lifecycle tests cover the transition itself.
+  await query("UPDATE strategy_promotions SET stage = 'enabled' WHERE id = ?", [promotion.id]);
 
   const signal = {
     ...GOOD_SIGNAL, symbol_id: symbolId, strategy_id: strategy.id, timeframe: 'H1'

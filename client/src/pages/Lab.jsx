@@ -15,6 +15,10 @@ import { api } from '../api';
 
 const TIMEFRAMES = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 
+// The stages, coloured by what they mean for money: enabled is trading,
+// demoted stopped working, backtest is waiting on evidence.
+const STAGE_TONE = { enabled: 'up', demoted: 'down', backtest: '' };
+
 function pf(value) {
   if (value === null || value === undefined) return '—';
   const n = Number(value);
@@ -41,9 +45,11 @@ export default function Lab() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [onlyPromotable, setOnlyPromotable] = useState(false);
+  const [life, setLife] = useState({ counts: {}, promotions: [] });
 
   const load = useCallback(async () => {
     setData(await api.labStudies(onlyPromotable ? '?promotable=true' : ''));
+    setLife(await api.lifecycle());
   }, [onlyPromotable]);
 
   useEffect(() => {
@@ -101,6 +107,48 @@ export default function Lab() {
     }
   }
 
+  async function confirmOne(id) {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api.confirmCombination(id);
+      if (!result.confirmed) {
+        setError(`confirmation failed: ${(result.failures || []).join('; ')}`);
+      }
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmAll() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.confirmPending();
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reviewLive() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.reviewLive();
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function revoke(id) {
     setError(null);
     try {
@@ -113,7 +161,9 @@ export default function Lab() {
 
   if (!data) return <section className="panel"><p className="muted">Loading studies…</p></section>;
 
-  const { job, studies, promotions } = data;
+  const { job, studies } = data;
+  const pipeline = life.promotions || [];
+  const counts = life.counts || {};
   const running = job?.running;
   const p = job?.progress;
   const pct = p?.total ? Math.round((p.done / p.total) * 100) : 0;
@@ -211,39 +261,57 @@ export default function Lab() {
 
       <section className="panel">
         <div className="panel-header">
-          <h3>Promoted combinations</h3>
-          <span>{promotions.length} allowed to trade</span>
+          <h3>Pipeline</h3>
+          <span>
+            {counts.backtest || 0} awaiting confirmation · {counts.enabled || 0} trading ·{' '}
+            {counts.demoted || 0} demoted
+          </span>
         </div>
 
-        {promotions.length === 0 ? (
+        <div className="toolbar">
+          <button disabled={busy} onClick={confirmAll}>
+            Confirm everything waiting
+          </button>
+          <button disabled={busy} onClick={reviewLive}>
+            Review live results now
+          </button>
+        </div>
+
+        {pipeline.length === 0 ? (
           <p className="empty">
-            Nothing is promoted. With enforcement on, no strategy may trade until a study clears
-            both windows.
+            Nothing has left research. A combination appears here once a study clears both windows.
           </p>
         ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>Strategy</th><th>Symbol</th><th>TF</th>
-                <th>Validate</th><th>Holdout</th><th>Trials</th><th>Parameters</th><th />
+                <th>Stage</th><th>Strategy</th><th>Symbol</th><th>TF</th>
+                <th>Validate</th><th>Holdout</th><th>Live</th><th>Why</th><th />
               </tr>
             </thead>
             <tbody>
-              {promotions.map((row) => (
+              {pipeline.map((row) => (
                 <tr key={row.id}>
-                  <td><strong>{row.strategy_name}</strong></td>
+                  <td className={STAGE_TONE[row.stage] || 'muted'}>
+                    <strong>{row.revoked_at ? 'revoked' : row.stage}</strong>
+                  </td>
+                  <td>{row.strategy_name}</td>
                   <td>{row.symbol}</td>
                   <td>{row.timeframe}</td>
                   <td className={toneFor(row.validate_pf)}>{pf(row.validate_pf)}</td>
                   <td className={toneFor(row.holdout_pf)}>{pf(row.holdout_pf)}</td>
-                  <td className="muted">{row.trials}</td>
-                  <td className="muted">
-                    {Object.entries(row.params || {})
-                      .filter(([k]) => /atr(Stop|Target)Multiple|maxHoldBars/.test(k))
-                      .map(([k, v]) => `${k.replace('atr', '').replace('Multiple', '')} ${v}`)
-                      .join(' · ') || '—'}
+                  <td className={row.live_trades >= 20 ? toneFor(row.live_pf, 1) : 'muted'}>
+                    {row.live_trades > 0 ? `${pf(row.live_pf)} (${row.live_trades})` : '—'}
                   </td>
-                  <td><button onClick={() => revoke(row.id)}>Revoke</button></td>
+                  <td className="muted">{row.demote_reason || row.revoked_note || ''}</td>
+                  <td>
+                    {row.stage === 'backtest' && !row.revoked_at && (
+                      <button disabled={busy} onClick={() => confirmOne(row.id)}>Confirm</button>
+                    )}
+                    {row.stage === 'enabled' && !row.revoked_at && (
+                      <button onClick={() => revoke(row.id)}>Revoke</button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -251,10 +319,17 @@ export default function Lab() {
         )}
 
         <p className="muted">
-          Promotion is per <strong>combination</strong>, and the parameters are pinned with it.
-          Measured over a year, smart-money reaches a profit factor of 1.40 on BTCUSD H1 and 0.43 on
-          BTCUSD M5 — the same code on the same instrument, one an edge and one a way to pay the
-          spread. The signal generator trades the promoted numbers, not the shipped defaults.
+          <strong>research → backtest → enabled</strong>, and back to research when live results
+          fall below a profit factor of 1.0 over at least 20 closed trades. The confirmation step is
+          not a repeat of the lab: the lab <em>searched</em>, so its holdout was reached after
+          hundreds of trials, while confirmation runs one fixed parameter set across the whole year
+          with no selection in it at all. It catches a winner that only worked in the quarter it
+          happened to land on.
+        </p>
+        <p className="muted">
+          A strategy is enabled for a <strong>symbol and timeframe</strong>, never in general, and
+          collects more of them as more studies pass. Strategy-level enablement is derived from
+          this table and is never set by hand.
         </p>
       </section>
 

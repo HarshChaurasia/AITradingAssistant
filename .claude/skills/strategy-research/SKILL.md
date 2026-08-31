@@ -75,11 +75,62 @@ That combination passes validation and falls apart on data nothing chose it
 for. Under a two-window scheme it would have been promoted and lost money. It
 is the reason the third window exists.
 
+## The lifecycle
+
+```
+research ──lab clears validate+holdout──▶ backtest ──confirmation passes──▶ enabled
+   ▲                                                                          │
+   └───── demoted: live PF < 1.0 over at least 20 closed trades ──────────────┘
+```
+
+Every stage is per **combination** — strategy + symbol + timeframe. A strategy
+accumulates enabled combinations one at a time, as each earns its own
+evidence. `strategies.enabled` is DERIVED from this and must never be set by
+hand; setting it by hand is what let strategies with no passing evidence trade
+for weeks.
+
+**research** — the lab searches here, and only here. Every registered
+strategy is studied regardless of its enabled flag: enabled is the lab's
+output, so taking it as input too would mean a disabled strategy could never
+earn its way back.
+
+**backtest** — the lab found parameters that cleared both windows. The
+confirmation run follows.
+
+**enabled** — confirmation passed. The scanner generates signals for this
+combination alone, with these parameters.
+
+**demoted** — live profit factor below 1.0 over at least 20 closed trades.
+The trade minimum matters more than the threshold: a genuine 55%-win strategy
+produces losing ten-trade runs regularly, and demoting on those means nothing
+survives long enough to be judged.
+
+### The confirmation run is not a repeat of the lab
+
+The lab **searched** — up to four hundred candidates — so its holdout was
+reached after heavy selection. Confirmation runs **one fixed parameter set
+across the whole period, with no search at all**. It catches what the lab
+structurally cannot: a winner that only worked in the quarter it landed on.
+
+It must be judged on the FULL period, not on a sub-window. The first
+implementation took `executeRun`'s own verdict, which comes from its validate
+window — the same slice the lab had already scored. The step ran and proved
+nothing, and it was caught only because the numbers came back identical: 1.54
+on 29 trades, to the decimal, exactly the lab's figure. Judged honestly, the
+same two combinations read **1.74 over 120 trades** and **1.82 over 140** —
+four times the sample and a far stronger claim.
+
 ## Promotion
 
 ```bash
-POST /api/lab/studies/:id/promote
+POST /api/lab/studies/:id/promote     # -> backtest stage
+POST /api/lab/promotions/:id/confirm  # -> enabled, if it passes
+POST /api/lab/confirm-pending         # confirm everything waiting
+POST /api/lab/review-live             # check live results, demote failures
 ```
+
+The scheduler does the last two every cycle, so the loop runs without anyone
+watching.
 
 Refused unless the study cleared **both** validate and holdout. Do not reach
 for `force: true` to get past that — the refusal is the feature.
@@ -142,3 +193,5 @@ When a study fails, in order of what is actually worth doing:
 | "It passed, so it works" | It passed *once*, on one window, after N trials. Report N. |
 | "Use one spread for the whole sweep" | 0.0002 is right for EURUSD and effectively zero against BTCUSD's $12. Measured: it flatters BTCUSD from 0.78 to 0.85. |
 | "Promote the strategy" | Promote the combination. The same code is an edge on one timeframe and noise on another. |
+| "Confirmation passed, and it matched the lab exactly" | Then it re-measured the lab's own window and proved nothing. Confirmation judges the FULL period. |
+| "I'll just enable it by hand for now" | `strategies.enabled` is derived. Hand-setting it is what let strategies with no evidence trade for weeks. |

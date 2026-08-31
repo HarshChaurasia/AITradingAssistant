@@ -156,6 +156,10 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   cancelLabStudy: () => request('/api/lab/studies/cancel', { method: 'POST' }),
+  lifecycle: () => request('/api/lab/lifecycle'),
+  confirmCombination: (id) => request(`/api/lab/promotions/${id}/confirm`, { method: 'POST' }),
+  confirmPending: () => request('/api/lab/confirm-pending', { method: 'POST' }),
+  reviewLive: () => request('/api/lab/review-live', { method: 'POST' }),
   promoteStudy: (id) => request(`/api/lab/studies/${id}/promote`, { method: 'POST' }),
   revokePromotion: (id, note) =>
     request(`/api/lab/promotions/${id}/revoke`, {
