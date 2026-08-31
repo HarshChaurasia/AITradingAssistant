@@ -10,12 +10,25 @@ const { superTrend, atr, ema } = require('../indicators');
  * The flip is a two-bar comparison, so this reads bar i and i-1 - both past.
  */
 
+/**
+ * Defaults from the same out-of-sample study. Pooled over three symbols and
+ * three timeframes for a year:
+ *
+ *   baseline (100 EMA, 2x stop)   98 trades  PF 0.82  -10,784
+ *   3x stop                       84 trades  PF 0.94   -2,544
+ *   200 EMA filter                90 trades  PF 0.97   -1,560
+ *   200 EMA + 3x stop             78 trades  PF 1.07   +2,584  <- these
+ *
+ * Only just profitable, and said plainly: this is a strategy that has been
+ * moved from clearly losing to roughly breaking even. It has not earned a
+ * promotion, only the right to keep being measured.
+ */
 const defaultParams = {
   atrPeriod: 10,
   multiplier: 3.0,
-  trendEma: 100,
+  trendEma: 200,
   stopAtrPeriod: 14,
-  atrStopMultiple: 2.0,
+  atrStopMultiple: 3.0,
   atrTargetMultiple: 3.0
 };
 
@@ -146,7 +159,7 @@ function explain(candles, index, params, context) {
 
 module.exports = {
   name: 'supertrend',
-  version: '1.0.0',
+  version: '1.1.0',
   defaultParams,
   prepare,
   evaluate,

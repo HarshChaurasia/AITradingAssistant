@@ -145,10 +145,13 @@ export const api = {
   missed: (mode = 'demo', verdict = '') =>
     request(`/api/missed?mode=${mode}${verdict ? `&verdict=${verdict}` : ''}`),
   evaluateMissed: () => request('/api/missed/evaluate', { method: 'POST' }),
-  syncCandles: (symbolId, timeframe, count = 2000) =>
+  // `months` lets the server work out the bar count from the timeframe. Six
+  // months of M5 is 52,000 bars and six months of D1 is 183; one flat number
+  // cannot mean the same span on both.
+  syncCandles: (symbolId, timeframe, months = 6) =>
     request('/api/candles/sync', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ symbolId, timeframe, count })
+      body: JSON.stringify({ symbolId, timeframe, months })
     })
 };

@@ -50,7 +50,7 @@ async function scanWatchlist({
   const settings = await loadOperationsSettings();
   const activeTimeframe = timeframe || settings.tradedTimeframes[0];
 
-  const strategyRows = await query('SELECT * FROM strategies ORDER BY name');
+  const strategyRows = await query('SELECT * FROM strategies WHERE superseded_at IS NULL ORDER BY name');
   const symbols = await query(
     'SELECT * FROM symbols WHERE watched = 1 OR enabled = 1 ORDER BY broker_symbol'
   );

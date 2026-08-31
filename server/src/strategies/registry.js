@@ -56,11 +56,33 @@ async function registerStrategies() {
       [s.name, s.version, JSON.stringify(s.defaultParams)]
     );
   }
-  return query('SELECT * FROM strategies ORDER BY name');
+  // Retire older versions of anything shipped here.
+  //
+  // Bumping a version writes a NEW row, and the previous one would otherwise
+  // stay enabled - running today's code against yesterday's stored parameters,
+  // because mergeParams lets the stored values win. The row itself stays:
+  // every signal and backtest run it produced points at that id, and that
+  // history is the only record of what the parameters were at the time.
+  for (const s of strategies) {
+    await query(
+      `UPDATE strategies SET enabled = 0, superseded_at = UTC_TIMESTAMP()
+        WHERE name = ? AND version <> ? AND superseded_at IS NULL`,
+      [s.name, s.version]
+    );
+  }
+
+  return listStrategies();
 }
 
+/**
+ * The strategies currently shipped.
+ *
+ * Superseded versions are excluded: two rows named trend-breakout in a
+ * dropdown is an invitation to run the wrong one. Analytics groups by NAME
+ * rather than id, so a strategy's record survives its own retuning.
+ */
 async function listStrategies() {
-  return query('SELECT * FROM strategies ORDER BY name');
+  return query('SELECT * FROM strategies WHERE superseded_at IS NULL ORDER BY name');
 }
 
 module.exports = { strategies, getStrategy, mergeParams, registerStrategies, listStrategies };

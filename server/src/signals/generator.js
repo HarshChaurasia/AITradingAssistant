@@ -138,7 +138,7 @@ async function generateSignals({
   // way, so an approved signal behaves exactly like an auto-approved one.
   const autoApprove = ops.autoTradeEnabled && (mode !== 'live' || ops.autoTradeLive);
 
-  const strategies = await query('SELECT * FROM strategies WHERE enabled = 1');
+  const strategies = await query('SELECT * FROM strategies WHERE enabled = 1 AND superseded_at IS NULL');
   const symbols = await query('SELECT * FROM symbols WHERE enabled = 1');
   const scopes = await loadScopes();
 

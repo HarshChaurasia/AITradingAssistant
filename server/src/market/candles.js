@@ -22,6 +22,21 @@ const UPSERT_SUFFIX = `
     spread      = VALUES(spread)
 `;
 
+// Bars in six months, per timeframe. Used by the dashboard's Backfill button,
+// which used to pull a flat 2,000 - three weeks of M5, and nowhere near enough
+// for a backtest to reach fifty out-of-sample trades.
+const BARS_PER_SIX_MONTHS = {
+  M1: 262800, M5: 52560, M15: 17520, M30: 8760, H1: 4380, H4: 1095, D1: 183
+};
+
+function barsForMonths(timeframe, months = 6) {
+  const perSix = BARS_PER_SIX_MONTHS[timeframe] || 4380;
+  // A generous margin: weekends and holidays mean an instrument produces fewer
+  // bars than the calendar implies, and asking for too many is free while
+  // asking for too few quietly caps the history.
+  return Math.min(Math.ceil((perSix / 6) * months * 1.1), 120000);
+}
+
 async function syncCandles(bridge, { symbolId, brokerSymbol, timeframe, count = 500 }) {
   if (!TIMEFRAMES.includes(timeframe)) {
     throw new Error(`unsupported timeframe: ${timeframe}`);
@@ -78,4 +93,4 @@ async function getCandles({ symbolId, timeframe, limit = 500 }) {
     .map((r) => ({ ...r, open_time: new Date(r.open_time).toISOString() }));
 }
 
-module.exports = { syncCandles, getCandles, TIMEFRAMES };
+module.exports = { syncCandles, getCandles, barsForMonths, BARS_PER_SIX_MONTHS, TIMEFRAMES };

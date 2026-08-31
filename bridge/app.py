@@ -456,7 +456,9 @@ def candles():
         return jsonify(error="symbol is required"), 400
     if timeframe not in TIMEFRAMES:
         return jsonify(error=f"unknown timeframe {timeframe}"), 400
-    count = max(1, min(count, 20000))
+    # Six months of M5 is about 52,000 bars, so the old 20,000 cap silently
+    # truncated any request for real history on a fast timeframe.
+    count = max(1, min(count, 120000))
 
     # A symbol must be selected in Market Watch before its history is readable.
     if not mt5.symbol_select(symbol, True):

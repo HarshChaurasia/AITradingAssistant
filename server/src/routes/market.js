@@ -1,7 +1,7 @@
 const express = require('express');
 
 const { syncSymbols, listSymbols, setSymbolEnabled, setSymbolWatched } = require('../market/symbols');
-const { syncCandles, getCandles, TIMEFRAMES } = require('../market/candles');
+const { syncCandles, getCandles, barsForMonths, TIMEFRAMES } = require('../market/candles');
 const { refreshMarketStatus, marketStatus } = require('../market/market-hours');
 const { query } = require('../db/pool');
 
@@ -127,7 +127,7 @@ function createMarketRouter({ bridge }) {
 
   router.post('/candles/sync', async (req, res, next) => {
     try {
-      const { symbolId, timeframe = 'H1', count = 1000 } = req.body || {};
+      const { symbolId, timeframe = 'H1', count, months } = req.body || {};
       if (!symbolId) return res.status(400).json({ error: 'symbolId is required' });
       if (!TIMEFRAMES.includes(timeframe)) {
         return res.status(400).json({ error: `timeframe must be one of ${TIMEFRAMES.join(', ')}` });
@@ -136,12 +136,22 @@ function createMarketRouter({ bridge }) {
       const rows = await query('SELECT broker_symbol FROM symbols WHERE id = ?', [symbolId]);
       if (rows.length === 0) return res.status(404).json({ error: `unknown symbolId ${symbolId}` });
 
-      res.json(await syncCandles(bridge, {
-        symbolId,
-        brokerSymbol: rows[0].broker_symbol,
-        timeframe,
-        count: Math.min(Number(count), 20000)
-      }));
+      // `months` is what the dashboard sends: the bar count for a span is a
+      // function of the timeframe, and a flat 2,000 meant three weeks of M5
+      // against nine years of D1.
+      const bars = months
+        ? barsForMonths(timeframe, Math.min(Math.max(Number(months) || 6, 1), 60))
+        : Math.min(Number(count) || 1000, 120000);
+
+      res.json({
+        ...(await syncCandles(bridge, {
+          symbolId,
+          brokerSymbol: rows[0].broker_symbol,
+          timeframe,
+          count: bars
+        })),
+        requestedBars: bars
+      });
     } catch (error) {
       next(error);
     }

@@ -13,6 +13,7 @@ export default function Markets() {
   const [bridge, setBridge] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
 
   const loadSymbols = useCallback(async () => {
     const rows = await api.symbols();
@@ -79,12 +80,13 @@ export default function Markets() {
           disabled={busy || !symbolId}
           onClick={() =>
             run(async () => {
-              await api.syncCandles(symbolId, timeframe, 2000);
+              const result = await api.syncCandles(symbolId, timeframe, 6);
               setCandles(await api.candles(symbolId, timeframe, 500));
+              setNotice(`backfilled ${result.stored} of ${result.received} ${timeframe} bars (asked for six months, ${result.requestedBars})`);
             })
           }
         >
-          Backfill {timeframe}
+          Backfill 6 months of {timeframe}
         </button>
 
         {selected && (
@@ -103,6 +105,7 @@ export default function Markets() {
       </div>
 
       {error && <p className="error">{error}</p>}
+      {notice && <p className="muted">{notice}</p>}
 
       {candles.length === 0 ? (
         <p className="empty">

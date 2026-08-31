@@ -76,7 +76,7 @@ function createScanRunner({
       const timeframes = settings.scanTimeframes;
       const balance = Number(process.env.ACCOUNT_BALANCE_HINT || 10000);
 
-      const strategyRows = await queryFn('SELECT * FROM strategies ORDER BY name');
+      const strategyRows = await queryFn('SELECT * FROM strategies WHERE superseded_at IS NULL ORDER BY name');
       const symbols = await queryFn(
         'SELECT * FROM symbols WHERE watched = 1 OR enabled = 1 ORDER BY broker_symbol'
       );

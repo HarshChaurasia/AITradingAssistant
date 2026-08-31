@@ -4,9 +4,14 @@ const assert = require('node:assert/strict');
 const strategy = require('../src/strategies/trend-breakout');
 
 // Build a series that rises steadily, then breaks out hard.
+//
+// 260 bars, not 60: the regime filter is a 200-bar EMA, so a shorter series
+// never warms up and the strategy correctly declines to say anything. A
+// fixture that stops short would be testing the warm-up guard while claiming
+// to test the breakout.
 function risingThenBreakout() {
   const candles = [];
-  for (let i = 0; i < 60; i += 1) {
+  for (let i = 0; i < 260; i += 1) {
     const base = 100 + i * 0.1;
     candles.push({ open: base, high: base + 0.2, low: base - 0.2, close: base });
   }
@@ -50,7 +55,7 @@ test('a breakout above the channel in an uptrend produces a BUY', () => {
 
 test('no signal while price sits inside the channel', () => {
   const candles = [];
-  for (let i = 0; i < 80; i += 1) {
+  for (let i = 0; i < 280; i += 1) {
     const base = 100 + Math.sin(i / 5) * 0.5;
     candles.push({ open: base, high: base + 0.1, low: base - 0.1, close: base });
   }
@@ -64,7 +69,7 @@ test('no signal while price sits inside the channel', () => {
 
 test('a downtrend breakdown produces a SELL with an inverted stop', () => {
   const candles = [];
-  for (let i = 0; i < 60; i += 1) {
+  for (let i = 0; i < 260; i += 1) {
     const base = 100 - i * 0.1;
     candles.push({ open: base, high: base + 0.2, low: base - 0.2, close: base });
   }

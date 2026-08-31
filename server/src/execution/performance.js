@@ -111,6 +111,9 @@ async function breakdown({ mode = 'demo' } = {}) {
        FROM strategies st
        LEFT JOIN signals sig ON sig.strategy_id = st.id AND sig.mode = ?
        LEFT JOIN trades  t   ON t.signal_id = sig.id
+      -- Superseded versions are excluded: a retuned strategy would otherwise
+      -- appear twice, once for each version it has ever had.
+      WHERE st.superseded_at IS NULL
       GROUP BY st.id ORDER BY st.name`,
     [mode]
   );

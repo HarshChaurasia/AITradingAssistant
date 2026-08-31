@@ -182,7 +182,7 @@ async function backtestMatrix() {
  * backtest matrix, and what each one has produced live.
  */
 async function strategyAnalytics({ mode = 'demo' } = {}) {
-  const registered = await query('SELECT * FROM strategies ORDER BY name');
+  const registered = await query('SELECT * FROM strategies WHERE superseded_at IS NULL ORDER BY name');
   const live = await liveByStrategyTimeframe({ mode });
   const perSymbol = await liveByStrategySymbol({ mode });
   const matrix = await backtestMatrix();
