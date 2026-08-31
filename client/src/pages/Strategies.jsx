@@ -72,6 +72,10 @@ export default function Strategies() {
   const [chosenSymbols, setChosenSymbols] = useState([]);
   const [chosenTimeframes, setChosenTimeframes] = useState(['M15', 'M30', 'H1', 'H4']);
   const [iterations, setIterations] = useState(5);
+  // Empty means every registered strategy. Narrowing matters because a full
+  // grid is 325 combinations and half an hour; re-studying one strategy after
+  // an edit should not cost that.
+  const [chosenStrategies, setChosenStrategies] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -161,11 +165,15 @@ export default function Strategies() {
                 </select>
               </label>
               <button
-                disabled={busy || running || chosenSymbols.length === 0}
+                disabled={busy || running || chosenSymbols.length === 0 || chosenTimeframes.length === 0}
                 onClick={() => act(async () => {
                   const from = new Date();
                   from.setFullYear(from.getFullYear() - 1);
                   await api.startLabStudy({
+                    // Omitted rather than empty: the server reads "no names"
+                    // as "every registered strategy", which is the right
+                    // default and the wrong thing to send explicitly.
+                    strategyNames: chosenStrategies.length > 0 ? chosenStrategies : undefined,
                     symbolIds: chosenSymbols,
                     timeframes: chosenTimeframes,
                     iterations,
@@ -187,6 +195,41 @@ export default function Strategies() {
               {running && (
                 <button onClick={() => api.cancelLabStudy().catch(() => {})}>Cancel</button>
               )}
+            </div>
+
+            <div className="toolbar">
+              <span className="muted">
+                strategies
+                {chosenStrategies.length === 0
+                  ? ' — all of them'
+                  : ` — ${chosenStrategies.length} of ${strategies.length}`}
+              </span>
+              <button
+                className="link"
+                disabled={running}
+                onClick={() => setChosenStrategies([])}
+              >
+                select all
+              </button>
+              {strategies.map((st) => (
+                <label key={st.id} className="setting-toggle">
+                  <input
+                    type="checkbox"
+                    disabled={running}
+                    checked={chosenStrategies.length === 0 || chosenStrategies.includes(st.name)}
+                    onChange={() => setChosenStrategies((cur) => {
+                      // An empty list means "all", so the first click has to
+                      // start from every name and remove one - otherwise
+                      // unticking one strategy would silently select only it.
+                      const base = cur.length === 0 ? strategies.map((x) => x.name) : cur;
+                      return base.includes(st.name)
+                        ? base.filter((n) => n !== st.name)
+                        : [...base, st.name];
+                    })}
+                  />
+                  <span>{st.name}{st.kind === 'scalp' ? ' ·scalp' : ''}</span>
+                </label>
+              ))}
             </div>
 
             <div className="toolbar">

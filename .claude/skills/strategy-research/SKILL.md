@@ -34,6 +34,14 @@ estimate and becomes the maximum of N draws — a different and much larger
 quantity. There is no way to correct for this after the fact. The only defence
 is not doing it.
 
+## The full mechanics
+
+`docs/study-execution.md` walks the whole path from pressing Run study to a
+combination being allowed to trade: the three windows and why they are
+consecutive, how candidates are ranked and refined, what the verdict tests,
+why costs decide more than parameters do, and what the numbers cost to
+produce. Read it once before changing anything in the search.
+
 ## Running the loop
 
 ```bash
