@@ -15,7 +15,21 @@ const DEFAULT_RISK_SETTINGS = {
   // so the dial exists and the account cap above still bounds the total.
   maxPositionsPerSymbol: 10,
   consecutiveLossLimit: 3,
+  // The base blackout either side of a high-impact event, in minutes. It is a
+  // FLOOR, not the whole story: the window also scales with the timeframe
+  // being traded, because a signal on a four-hour bar is a claim about the
+  // next several hours and an event inside that horizon matters far more to it
+  // than to an M5 scalp that will be closed in twenty minutes.
   newsBlackoutMinutes: 15,
+  // How much of the bar the blackout covers. 1.0 means an H4 signal is blocked
+  // for four hours either side of a rate decision.
+  newsBlackoutBarFraction: 1.0,
+  // ...but never longer than this, or a D1 strategy would spend most of a busy
+  // week refusing to trade at all.
+  newsBlackoutMaxMinutes: 240,
+  // Medium-impact events are reported but do not block. Blocking on them
+  // silences the book for most of a normal week.
+  newsBlackoutMinImpact: 'HIGH',
   // Position notional as a multiple of equity. A correct 1% risk on a very
   // tight stop can still imply an enormous position - measured: a $9 stop on
   // ETH produced 147 lots, about $363,000 of notional on a $133,000 account.

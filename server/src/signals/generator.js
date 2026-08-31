@@ -74,7 +74,7 @@ async function generateForTimeframe({
       const barTime = candles[index].open_time.slice(0, 19).replace('T', ' ');
 
       const decision = await assessSignal({
-        signal: { ...raw, symbol_id: symbol.id, strategy_status: strategyRow.status },
+        signal: { ...raw, symbol_id: symbol.id, strategy_status: strategyRow.status, timeframe },
         symbol,
         mode,
         balance: Number(process.env.ACCOUNT_BALANCE_HINT || 10000),

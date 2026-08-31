@@ -115,7 +115,7 @@ async function evaluateSymbolTimeframe({
       const signal = strategy.evaluate(candles, index, params, context);
       if (signal) {
         const decision = await assessSignal({
-          signal: { ...signal, symbol_id: symbol.id, strategy_status: strategyRow.status },
+          signal: { ...signal, symbol_id: symbol.id, strategy_status: strategyRow.status, timeframe },
           symbol,
           mode,
           balance,

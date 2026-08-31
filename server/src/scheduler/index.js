@@ -9,6 +9,7 @@ const healthAlerts = require('../alerts/health');
 const { loadOperationsSettings, expiryMinutesFor } = require('../settings/operations');
 const { evaluateMissedSignals } = require('../signals/missed');
 const { refreshMarketStatus, watchedSymbols } = require('../market/market-hours');
+const { syncCalendar } = require('../news/calendar');
 
 /**
  * Periodic candle sync followed by signal generation.
@@ -45,6 +46,9 @@ function createScheduler({
   // synced moments earlier, instead of racing the sync.
   scanRunner = null,
   gradeMissedFn = evaluateMissedSignals,
+  syncCalendarFn = syncCalendar,
+  // The economic calendar changes by the day, not the minute.
+  calendarIntervalMs = 3600000,
   refreshMarketStatusFn = refreshMarketStatus,
   watchedSymbolsFn = watchedSymbols,
   ensureBridgeConnectedFn = ensureBridgeConnected,
@@ -55,6 +59,7 @@ function createScheduler({
   let timer = null;
   let ticking = false;
   let lastResult = null;
+  let calendarAt = 0;
   // Survives across ticks so an outage alerts once, not every minute.
   const health = { bridgeDown: false, lowDisk: false };
 
@@ -77,6 +82,15 @@ function createScheduler({
         note: 'broker link is down; skipping this cycle'
       };
       return lastResult;
+    }
+
+    // Refresh the economic calendar hourly. Until this existed the news gate
+    // read an empty table and reported "no high impact news" for every signal
+    // ever assessed - true only in the sense that an empty table has no rows.
+    let calendar = null;
+    if (Date.now() - calendarAt >= calendarIntervalMs) {
+      calendarAt = Date.now();
+      calendar = await syncCalendarFn({ logger });
     }
 
     // Ask the broker which of the watched markets are open, every tick. This
@@ -157,7 +171,7 @@ function createScheduler({
       diskFreeGb: disk.freeGb,
       timeframes: activeTimeframes,
       autoTrade: settings.autoTradeEnabled,
-      symbolsSynced, marketsChecked, signals, execution, reconciliation, expired, missed
+      symbolsSynced, marketsChecked, calendar, signals, execution, reconciliation, expired, missed
     };
     return lastResult;
   }

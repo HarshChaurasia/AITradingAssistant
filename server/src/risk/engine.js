@@ -3,6 +3,8 @@ const { sizePosition } = require('./sizing');
 const { loadRiskSettings } = require('./settings');
 const { getState, currentTradingDay } = require('./state');
 const { marketStatus } = require('../market/market-hours');
+const { eventsNear } = require('../news/calendar');
+const { TIMEFRAME_MINUTES } = require('../settings/operations');
 
 /**
  * Runs every risk gate over a candidate signal.
@@ -12,28 +14,30 @@ const { marketStatus } = require('../market/market-hours');
  * picture is what makes it diagnosable.
  */
 
-async function newsConflict({ symbol, now, blackoutMinutes }) {
+/**
+ * How far a high-impact event reaches, for the timeframe being traded.
+ *
+ * A flat fifteen minutes treated an M5 scalp and an H4 swing identically,
+ * which is wrong in both directions: too wide for one, far too narrow for the
+ * other. A signal on a four-hour bar is a claim about the next several hours,
+ * so an event inside that horizon is squarely its problem.
+ */
+function blackoutMinutesFor(timeframe, settings) {
+  const barMinutes = TIMEFRAME_MINUTES[timeframe] || 60;
+  const scaled = barMinutes * settings.newsBlackoutBarFraction;
+  return Math.min(
+    Math.max(scaled, settings.newsBlackoutMinutes),
+    settings.newsBlackoutMaxMinutes
+  );
+}
+
+async function newsConflict({ symbol, now, blackoutMinutes, minImpact = 'HIGH' }) {
   const currencies = [symbol.currency_profit, symbol.currency_margin].filter(Boolean);
   if (currencies.length === 0) return null;
 
-  const windowMs = blackoutMinutes * 60 * 1000;
-  const from = new Date(now.getTime() - windowMs);
-  const to = new Date(now.getTime() + windowMs);
-
-  const rows = await query(
-    `SELECT title, currency, event_time
-       FROM news_events
-      WHERE impact = 'HIGH'
-        AND event_time BETWEEN ? AND ?
-        AND currency IN (${currencies.map(() => '?').join(',')})
-      ORDER BY event_time
-      LIMIT 1`,
-    [
-      from.toISOString().slice(0, 19).replace('T', ' '),
-      to.toISOString().slice(0, 19).replace('T', ' '),
-      ...currencies
-    ]
-  );
+  const rows = await eventsNear({
+    currencies, at: now, withinMinutes: blackoutMinutes, minImpact
+  });
   return rows[0] || null;
 }
 
@@ -83,12 +87,21 @@ async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, 
   add('max_concurrent_positions', !atCap,
     `${openPositions} open, limit ${settings.maxConcurrentPositions}`);
 
-  // 5. High impact news near the entry.
-  const news = await newsConflict({ symbol, now, blackoutMinutes: settings.newsBlackoutMinutes });
+  // 5. High impact news near the entry, scaled to the timeframe.
+  //
+  // Worth knowing when reading this: until the calendar ingest was added this
+  // gate had never blocked a single trade, because news_events was empty. It
+  // reported "no high impact news" for every signal ever assessed, which was
+  // true only in the sense that an empty table contains no events.
+  const timeframe = signal.timeframe || null;
+  const blackoutMinutes = blackoutMinutesFor(timeframe, settings);
+  const news = await newsConflict({
+    symbol, now, blackoutMinutes, minImpact: settings.newsBlackoutMinImpact
+  });
   add('news_blackout', !news,
     news
-      ? `${news.title} (${news.currency}) within ${settings.newsBlackoutMinutes} minutes`
-      : `no high impact news within ${settings.newsBlackoutMinutes} minutes`);
+      ? `${news.title} (${news.currency}) at ${new Date(news.event_time).toISOString().slice(11, 16)} UTC, within the ${Math.round(blackoutMinutes)}-minute window for ${timeframe || 'this timeframe'}`
+      : `no ${settings.newsBlackoutMinImpact.toLowerCase()}-impact event within ${Math.round(blackoutMinutes)} minutes${timeframe ? ` (scaled to ${timeframe})` : ''}`);
 
   // 6. Promotion. Live capital demands a strategy that finished validation.
   const promoted = mode !== 'live' || signal.strategy_status === 'live';
@@ -157,4 +170,4 @@ async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, 
   };
 }
 
-module.exports = { assessSignal };
+module.exports = { assessSignal, blackoutMinutesFor };

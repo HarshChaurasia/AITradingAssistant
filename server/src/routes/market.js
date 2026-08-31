@@ -3,6 +3,7 @@ const express = require('express');
 const { syncSymbols, listSymbols, setSymbolEnabled, setSymbolWatched } = require('../market/symbols');
 const { syncCandles, getCandles, barsForMonths, TIMEFRAMES } = require('../market/candles');
 const { refreshMarketStatus, marketStatus } = require('../market/market-hours');
+const { syncCalendar, upcoming } = require('../news/calendar');
 const { query } = require('../db/pool');
 
 function createMarketRouter({ bridge }) {
@@ -103,6 +104,25 @@ function createMarketRouter({ bridge }) {
       }
 
       res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/news', async (req, res, next) => {
+    try {
+      res.json(await upcoming({
+        hours: req.query.hours,
+        minImpact: req.query.minImpact === 'HIGH' ? 'HIGH' : 'MEDIUM'
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/news/sync', async (req, res, next) => {
+    try {
+      res.json(await syncCalendar());
     } catch (error) {
       next(error);
     }

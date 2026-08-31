@@ -81,6 +81,7 @@ export default function Scanner() {
   const [snap, setSnap] = useState(null);
   const [symbols, setSymbols] = useState([]);
   const [markets, setMarkets] = useState([]);
+  const [news, setNews] = useState([]);
   const [filter, setFilter] = useState('tradeable');
   const [sortBy, setSortBy] = useState('score');
   const [timeframeFilter, setTimeframeFilter] = useState('');
@@ -93,6 +94,7 @@ export default function Scanner() {
   const load = useCallback(async () => {
     setSnap(await api.scannerLive());
     setMarkets(await api.marketStatus());
+    setNews(await api.news(72, 'HIGH'));
   }, []);
 
   useEffect(() => {
@@ -411,6 +413,38 @@ export default function Scanner() {
               A shut market is refused before an order is ever built. The calendar comes from the
               broker, not from a hardcoded weekend rule — BTCUSD trades straight through Saturday
               and several instruments close early on Friday.
+            </p>
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <h3>Economic calendar</h3>
+              <button className="link" disabled={busy} onClick={() => act(() => api.syncNews())}>
+                refresh
+              </button>
+            </div>
+            {news.length === 0 && <p className="empty">No high-impact events in the next 72 hours.</p>}
+            <ul className="gates">
+              {news.slice(0, 12).map((e, i) => {
+                const at = new Date(e.event_time);
+                const mins = Math.round((at.getTime() - Date.now()) / 60000);
+                const soon = Math.abs(mins) <= 240;
+                return (
+                  <li key={`${e.event_time}-${i}`} className={soon ? 'gate fail' : 'gate'}>
+                    <span className="gate-name">{e.currency || '--'} {at.toISOString().slice(5, 16).replace('T', ' ')}</span>
+                    <span className="gate-detail">
+                      {e.title}
+                      {soon && <strong> · {mins >= 0 ? `in ${mins}m` : `${-mins}m ago`}</strong>}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="muted">
+              High-impact events only. The blackout scales with the bar: 15 minutes either side for
+              M5, four hours for H4 — a signal on a four-hour bar is a claim about the next several
+              hours, so an event inside that horizon is squarely its problem. Only the traded
+              currencies of a symbol count, so a BOJ release does not stop a EURUSD trade.
             </p>
           </div>
 

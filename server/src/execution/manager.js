@@ -92,7 +92,9 @@ async function executeSignal({ bridge, signal, mode, balance, claimed = false })
       sl: Number(signal.sl),
       tp: signal.tp === null ? null : Number(signal.tp),
       symbol_id: signal.symbol_id,
-      strategy_status: signal.strategy_status
+      strategy_status: signal.strategy_status,
+      // The news blackout scales with the bar, so the gate needs to know which.
+      timeframe: signal.timeframe
     },
     symbol,
     mode,

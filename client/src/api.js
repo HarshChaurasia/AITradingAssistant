@@ -107,6 +107,9 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   marketStatus: () => request('/api/symbols/market-status'),
+  news: (hours = 72, minImpact = 'HIGH') =>
+    request(`/api/news?hours=${hours}&minImpact=${minImpact}`),
+  syncNews: () => request('/api/news/sync', { method: 'POST' }),
   refreshMarketStatus: () => request('/api/symbols/market-status/refresh', { method: 'POST' }),
   scannerLive: () => request('/api/scanner/live'),
   startScan: (mode = 'demo') =>
