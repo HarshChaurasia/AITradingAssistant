@@ -76,13 +76,38 @@ function createScanRunner({
       const timeframes = settings.scanTimeframes;
       const balance = Number(process.env.ACCOUNT_BALANCE_HINT || 10000);
 
-      const strategyRows = await queryFn('SELECT * FROM strategies WHERE superseded_at IS NULL ORDER BY name');
+      /**
+       * Enabled strategies only.
+       *
+       * Scanning everything registered meant the screen was full of setups
+       * from strategies that had failed their backtest and would never be
+       * traded - eleven of thirteen, currently. That is not a watchlist, it
+       * is noise wearing a watchlist's clothes, and it also cost real work:
+       * thirteen strategies over five symbols and six timeframes is 390
+       * evaluations a scan, most of them for nothing.
+       *
+       * `enabled` is derived from the lifecycle, so this follows promotion
+       * automatically: a combination that earns its way in appears here, and
+       * one that is demoted disappears.
+       */
+      const strategyRows = await queryFn(
+        'SELECT * FROM strategies WHERE enabled = 1 AND superseded_at IS NULL ORDER BY name'
+      );
       const symbols = await queryFn(
         'SELECT * FROM symbols WHERE watched = 1 OR enabled = 1 ORDER BY broker_symbol'
       );
 
       const openPositions = await countOpenPositionsFn(mode);
       const evidenceFor = await loadEvidenceFn();
+
+      if (strategyRows.length === 0) {
+        // Not an error, and not silence either. Enablement is earned now, so
+        // an empty book is the normal state until something passes the lab.
+        push({
+          kind: 'scan_note',
+          text: 'No strategies are enabled - nothing has passed the lab yet, so there is nothing to scan for'
+        });
+      }
 
       const total = symbols.length * timeframes.length;
       progress = { phase: 'scanning', done: 0, total, symbol: null, timeframe: null };

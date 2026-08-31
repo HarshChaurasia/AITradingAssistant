@@ -50,7 +50,23 @@ async function scanWatchlist({
   const settings = await loadOperationsSettings();
   const activeTimeframe = timeframe || settings.tradedTimeframes[0];
 
-  const strategyRows = await query('SELECT * FROM strategies WHERE superseded_at IS NULL ORDER BY name');
+  /**
+   * Enabled strategies only.
+   *
+   * Scanning everything registered meant the screen was full of setups
+   * from strategies that had failed their backtest and would never be
+   * traded - eleven of thirteen, currently. That is not a watchlist, it
+   * is noise wearing a watchlist's clothes, and it also cost real work:
+   * thirteen strategies over five symbols and six timeframes is 390
+   * evaluations a scan, most of them for nothing.
+   *
+   * `enabled` is derived from the lifecycle, so this follows promotion
+   * automatically: a combination that earns its way in appears here, and
+   * one that is demoted disappears.
+   */
+  const strategyRows = await query(
+    'SELECT * FROM strategies WHERE enabled = 1 AND superseded_at IS NULL ORDER BY name'
+  );
   const symbols = await query(
     'SELECT * FROM symbols WHERE watched = 1 OR enabled = 1 ORDER BY broker_symbol'
   );
@@ -73,6 +89,18 @@ async function scanWatchlist({
     // UI avoid claiming a setup on any other will be taken automatically.
     tradedTimeframes: settings.tradedTimeframes,
     balance,
+    strategiesRun: strategyRows.length,
+    /**
+     * Why the screen is empty, when it is.
+     *
+     * An empty scan with no explanation is indistinguishable from a broken
+     * one. Since enablement is now earned rather than set, "nothing here"
+     * is the normal state until a combination passes the lab, and saying so
+     * is the difference between a working system and one that looks dead.
+     */
+    note: strategyRows.length === 0
+      ? 'no strategies are enabled - nothing has passed the lab yet, so there is nothing to scan for'
+      : null,
     rows
   };
 }

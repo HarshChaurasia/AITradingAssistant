@@ -165,10 +165,24 @@ test('unwatched, untradeable symbols are not scanned', async (t) => {
   assert.equal(scan.rows.length, 0, '12,000 unwatched symbols must not be evaluated');
 });
 
-test('the scanner reports disabled strategies too, so a quiet screen is explicable', async (t) => {
+/**
+ * The scanner shows what could actually be traded.
+ *
+ * It used to run every registered strategy so that a quiet screen was
+ * explicable. That backfired once the lifecycle started disabling things on
+ * evidence: eleven of thirteen strategies have failed their backtest, so the
+ * screen filled with setups from strategies that would never be traded - not
+ * a watchlist, a watchlist's clothes worn by noise. It cost real work too,
+ * 390 evaluations a scan for mostly nothing.
+ *
+ * The concern behind the old test still stands, so it moves rather than
+ * disappearing: an empty screen must say WHY it is empty.
+ */
+test('the scanner runs only enabled strategies', async (t) => {
   await seeded(t);
   const { query } = require('../src/db/pool');
   await query('UPDATE strategies SET enabled = 0');
+  await query("UPDATE strategies SET enabled = 1 WHERE name = 'trend-breakout'");
 
   const symbolId = await addSymbol({ name: 'BOTHUSD', enabled: 1, watched: 1 });
   await addCandles(symbolId, { breakout: true });
@@ -176,11 +190,26 @@ test('the scanner reports disabled strategies too, so a quiet screen is explicab
   const { scanWatchlist } = require('../src/scanner');
   const scan = await scanWatchlist({ mode: 'demo', timeframe: 'H1', balance: 100000 });
 
-  const { strategies } = require('../src/strategies/registry');
   const entries = scan.rows[0].strategies;
-  assert.equal(entries.length, strategies.length, 'every shipped strategy is shown');
-  assert.ok(entries.every((e) => e.strategyEnabled === false),
-    'their enabled state is visible, so an empty Signals page is explicable');
+  assert.equal(entries.length, 1, 'a disabled strategy is not scanned at all');
+  assert.equal(entries[0].strategy, 'trend-breakout');
+});
+
+test('with nothing enabled the scan says so, rather than looking broken', async (t) => {
+  await seeded(t);
+  const { query } = require('../src/db/pool');
+  await query('UPDATE strategies SET enabled = 0');
+
+  const symbolId = await addSymbol({ name: 'QUIETUSD', enabled: 1, watched: 1 });
+  await addCandles(symbolId, { breakout: true });
+
+  const { scanWatchlist } = require('../src/scanner');
+  const scan = await scanWatchlist({ mode: 'demo', timeframe: 'H1', balance: 100000 });
+
+  assert.equal(scan.strategiesRun, 0);
+  // An empty screen with no explanation is indistinguishable from a broken
+  // one, which is the whole reason the old behaviour existed.
+  assert.match(scan.note || '', /no strategies are enabled/i);
 });
 
 test('the scanner persists nothing', async (t) => {

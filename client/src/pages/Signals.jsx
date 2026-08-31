@@ -107,11 +107,16 @@ export default function Signals() {
   const [expanded, setExpanded] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [pipeline, setPipeline] = useState([]);
 
   const load = useCallback(async () => {
     const query = `?mode=${mode}${status ? `&status=${status}` : ''}`;
     setSignals(await api.signals(query));
     setScheduler(await api.scheduler());
+    // What is actually allowed to produce a signal. Without it the screen
+    // cannot tell "nothing fired" from "nothing is permitted to fire", and
+    // those two call for completely different actions.
+    setPipeline((await api.lifecycle()).promotions || []);
   }, [mode, status]);
 
   useEffect(() => {
@@ -156,9 +161,54 @@ export default function Signals() {
   }, {});
 
   const lastRun = scheduler?.lastRun;
+  const enabled = pipeline.filter((p) => p.stage === 'enabled' && !p.revoked_at);
 
   return (
     <>
+      <div className="panel">
+        <div className="panel-header">
+          <h3>What can fire</h3>
+          <span>{enabled.length} combination{enabled.length === 1 ? '' : 's'} enabled</span>
+        </div>
+
+        {enabled.length === 0 ? (
+          <p className="empty">
+            Nothing is enabled, so no signal can be generated at all. A strategy earns its place by
+            passing the lab for a specific symbol and timeframe — until then this screen is
+            correctly empty rather than broken.
+          </p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr><th>Strategy</th><th>Symbol</th><th>TF</th><th>Backtest</th><th>Live so far</th></tr>
+            </thead>
+            <tbody>
+              {enabled.map((p) => (
+                <tr key={p.id}>
+                  <td><strong>{p.strategy_name}</strong></td>
+                  <td>{p.symbol}</td>
+                  <td>{p.timeframe}</td>
+                  <td className="muted">
+                    validate {Number(p.validate_pf).toFixed(2)} · holdout {Number(p.holdout_pf).toFixed(2)}
+                  </td>
+                  <td className={p.live_trades >= 20 && Number(p.live_pf) < 1 ? 'down' : 'muted'}>
+                    {p.live_trades > 0
+                      ? `${p.live_pf === null ? 'no losses yet' : Number(p.live_pf).toFixed(2)} over ${p.live_trades}`
+                      : 'no closed trades yet'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <p className="muted">
+          A signal can only appear for a combination listed here. A demoted one stops producing
+          signals immediately — demotion happens when live profit factor falls below 1.0 over at
+          least 20 closed trades.
+        </p>
+      </div>
+
       <section className="stats-grid">
         <div className="stat-card blue"><span>Showing</span><strong>{signals.length}</strong></div>
         <div className="stat-card green"><span>Approved</span><strong>{counts.approved || 0}</strong></div>
@@ -188,10 +238,25 @@ export default function Signals() {
             <option value="expired">expired</option>
             <option value="executed">executed</option>
           </select>
-          <button disabled={busy} onClick={runCycle}>
+          <button
+            disabled={busy}
+            onClick={runCycle}
+            title="Runs one full scheduler cycle immediately instead of waiting for the next minute."
+          >
             {busy ? 'Running a cycle…' : 'Run a cycle now'}
           </button>
         </div>
+
+        {/* What the button does, where someone wonders about it. A control
+            whose effect is invisible reads as broken exactly when the honest
+            answer is "it ran and found nothing". */}
+        <p className="muted">
+          <strong>Run a cycle now</strong> does one full pass immediately instead of waiting for the
+          next minute: sync candles → evaluate every enabled combination → send any approved order →
+          reconcile open positions against the broker → expire stale signals → grade refusals
+          against what happened next → advance the strategy lifecycle. It changes nothing about how
+          trading works. It runs the loop sooner and reports what that pass did.
+        </p>
 
         {error && <p className="error">{error}</p>}
 
