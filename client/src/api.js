@@ -143,7 +143,11 @@ export const api = {
     }),
   cancelLabStudy: () => request('/api/lab/studies/cancel', { method: 'POST' }),
   lifecycle: () => request('/api/lab/lifecycle'),
-  confirmCombination: (id) => request(`/api/lab/promotions/${id}/confirm`, { method: 'POST' }),
+  confirmCombination: (id, force = false) =>
+    request(`/api/lab/promotions/${id}/confirm`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ force })
+    }),
   confirmPending: () => request('/api/lab/confirm-pending', { method: 'POST' }),
   reviewLive: () => request('/api/lab/review-live', { method: 'POST' }),
   promoteStudy: (id) => request(`/api/lab/studies/${id}/promote`, { method: 'POST' }),

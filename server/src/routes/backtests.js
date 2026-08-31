@@ -277,7 +277,11 @@ function createBacktestRouter({ bridge = null } = {}) {
     try {
       res.json(await confirmCombination(Number(req.params.id), {
         bridge,
-        actor: req.user?.username || 'operator'
+        actor: req.user?.username || 'operator',
+        // Re-run for something already trading. A failed re-check demotes,
+        // which is the point: evidence gathered a year ago covers a different
+        // market from the one the position is open in.
+        force: req.body?.force === true
       }));
     } catch (error) {
       if (/unknown promotion/i.test(error.message)) {

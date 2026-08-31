@@ -307,3 +307,72 @@ test('a promoted timeframe is discoverable, so its candles get synced', async (t
   await ctx.query("UPDATE strategy_promotions SET stage = 'demoted' WHERE id = ?", [ctx.promotion.id]);
   assert.deepEqual(await promotedTimeframes(), []);
 });
+
+/**
+ * Re-running the backtest for something already trading.
+ *
+ * Without `force` there was no way to do it at all: the stage check
+ * short-circuited and reported success without running anything, so a
+ * promoted combination could never be re-examined. The evidence behind it was
+ * gathered on history that ends where the live period begins, and a year later
+ * it describes a different market.
+ */
+test('an enabled combination is not re-run by accident', async (t) => {
+  const ctx = await promoted(t);
+  const { confirmCombination } = require('../src/strategies/lifecycle');
+  await ctx.query("UPDATE strategy_promotions SET stage = 'enabled' WHERE id = ?", [ctx.promotion.id]);
+
+  let ran = false;
+  const executeRunFn = async () => { ran = true; throw new Error('should not run'); };
+
+  const result = await confirmCombination(ctx.promotion.id, { executeRunFn });
+
+  assert.equal(result.alreadyEnabled, true);
+  assert.equal(ran, false, 'the ordinary path must not re-backtest what is already live');
+});
+
+test('a forced re-check runs, and a passing one leaves it enabled', async (t) => {
+  const ctx = await promoted(t);
+  const { confirmCombination } = require('../src/strategies/lifecycle');
+  await ctx.query("UPDATE strategy_promotions SET stage = 'enabled' WHERE id = ?", [ctx.promotion.id]);
+
+  const executeRunFn = async () => ({
+    runId: 2001,
+    thresholds: { minProfitFactor: 1.3, maxDrawdownPct: 15, minTrades: 50 },
+    metrics: { profitFactor: 1.7, trades: 120, maxDrawdownPct: 6, expectancy: 200 },
+    walkForward: { outOfSample: { profitFactor: 1.7, trades: 30 } },
+    passed: true,
+    failures: []
+  });
+
+  const result = await confirmCombination(ctx.promotion.id, { force: true, executeRunFn });
+
+  assert.equal(result.confirmed, true);
+  const [row] = await ctx.query('SELECT stage, confirmation_run_id FROM strategy_promotions WHERE id = ?', [ctx.promotion.id]);
+  assert.equal(row.stage, 'enabled');
+  assert.equal(Number(row.confirmation_run_id), 2001, 'the newer evidence replaces the older');
+});
+
+test('a forced re-check that fails demotes what was trading', async (t) => {
+  const ctx = await promoted(t);
+  const { confirmCombination } = require('../src/strategies/lifecycle');
+  const { loadPromotedKeys } = require('../src/strategies/promotions');
+  await ctx.query("UPDATE strategy_promotions SET stage = 'enabled' WHERE id = ?", [ctx.promotion.id]);
+
+  const executeRunFn = async () => ({
+    runId: 2002,
+    thresholds: { minProfitFactor: 1.3, maxDrawdownPct: 15, minTrades: 50 },
+    metrics: { profitFactor: 0.7, trades: 140, maxDrawdownPct: 22, expectancy: -80 },
+    walkForward: { outOfSample: { profitFactor: 2.1, trades: 30 } },
+    passed: true,
+    failures: []
+  });
+
+  const result = await confirmCombination(ctx.promotion.id, { force: true, executeRunFn });
+
+  assert.equal(result.confirmed, false);
+  const [row] = await ctx.query('SELECT stage, demote_reason FROM strategy_promotions WHERE id = ?', [ctx.promotion.id]);
+  assert.equal(row.stage, 'demoted');
+  assert.match(row.demote_reason, /re-check failed/);
+  assert.equal((await loadPromotedKeys()).size, 0, 'it stops trading at once');
+});

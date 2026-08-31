@@ -83,6 +83,21 @@ async function syncEnabledFlags() {
 async function confirmCombination(promotionId, {
   bridge = null,
   actor = 'system',
+  /**
+   * Re-run for a combination that is already trading.
+   *
+   * Without this there was no way to backtest a promoted combination at all:
+   * the check below short-circuited and returned success without running
+   * anything. A re-check is the point of the exercise once something is live -
+   * the evidence was gathered on history that ends where the live period
+   * begins, and a year later it covers a different market.
+   *
+   * A failed re-check demotes, exactly as a first confirmation would. That is
+   * the intended behaviour and worth being deliberate about: a combination
+   * that no longer passes on the full year should not be trading, whoever
+   * pressed the button.
+   */
+  force = false,
   // Injected so a test can decide WHICH numbers reach the verdict without
   // needing a year of candles in the scratch database.
   executeRunFn = executeRun
@@ -96,7 +111,7 @@ async function confirmCombination(promotionId, {
     [promotionId]
   );
   if (!promotion) throw new Error(`unknown promotion ${promotionId}`);
-  if (promotion.stage === 'enabled') {
+  if (promotion.stage === 'enabled' && !force) {
     return { confirmed: true, alreadyEnabled: true, promotionId };
   }
 
@@ -149,7 +164,7 @@ async function confirmCombination(promotionId, {
       timeframe: promotion.timeframe,
       fromStage: promotion.stage,
       toStage: 'enabled',
-      reason: `confirmation passed: profit factor ${Number(metrics.profitFactor).toFixed(2)} over ${metrics.trades} trades across the whole period, with no parameter search`,
+      reason: `${promotion.stage === 'enabled' ? 're-check' : 'confirmation'} passed: profit factor ${Number(metrics.profitFactor).toFixed(2)} over ${metrics.trades} trades across the whole period, with no parameter search`,
       studyId: promotion.study_id,
       runId: run.runId,
       actor
@@ -176,7 +191,12 @@ async function confirmCombination(promotionId, {
         SET stage = 'demoted', confirmation_run_id = ?, demoted_at = UTC_TIMESTAMP(),
             demote_reason = ?
       WHERE id = ?`,
-    [run.runId, `confirmation failed: ${verdict.failures[0] || 'thresholds not met'}`, promotionId]
+    [
+      run.runId,
+      `${promotion.stage === 'enabled' ? 're-check' : 'confirmation'} failed: `
+        + `${verdict.failures[0] || 'thresholds not met'}`,
+      promotionId
+    ]
   );
   await recordEvent({
     strategyId: promotion.strategy_id,

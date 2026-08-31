@@ -207,6 +207,25 @@ because the numbers came back identical: 1.54 on 29 trades, to the decimal.
 Judged honestly, the same two combinations read **1.74 over 120 trades** and
 **1.82 over 140**.
 
+### Re-running the backtest for something already trading
+
+**Strategies → Enabled → Re-run backtest**, or
+`POST /api/lab/promotions/:id/confirm` with `{"force": true}`.
+
+The ordinary confirmation path deliberately does nothing for a combination
+already in service - a scheduler that re-backtested every live combination
+every minute would spend its life doing it. `force` is the explicit ask.
+
+It runs exactly the same thing a first confirmation runs: the pinned
+parameters, fixed, over the last year, with no search. **A failed re-check
+demotes**, which is the point rather than a side effect - the evidence behind a
+promotion was gathered on history that ends where the live period begins, and a
+year later it describes a different market. A combination that no longer passes
+should not be trading, whoever pressed the button.
+
+Nothing appears in the **Backtest** tab once it has been promoted; that queue
+holds only combinations awaiting their first confirmation.
+
 Promotion is per **strategy + symbol + timeframe**, with the parameters pinned.
 The signal generator trades the promoted numbers, not the shipped defaults —
 macd-trend clears its holdout on XAUUSD H1 with a 5.25 ATR target and fails at

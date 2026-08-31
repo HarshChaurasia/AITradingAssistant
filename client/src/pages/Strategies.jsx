@@ -361,7 +361,9 @@ export default function Strategies() {
           {awaiting.length === 0 ? (
             <p className="empty">
               Nothing is waiting. A combination arrives here when a study clears both windows, and
-              leaves it when the confirmation run either passes or fails.
+              leaves when its confirmation run passes or fails. To re-run the backtest for something
+              already trading, use <strong>Re-run backtest</strong> on the Enabled tab — a
+              combination that has been promoted no longer appears in this queue.
             </p>
           ) : (
             <table className="table">
@@ -470,6 +472,18 @@ export default function Strategies() {
                           .join(' · ') || '—'}
                       </td>
                       <td>
+                        {/* The evidence behind this row was gathered on
+                            history that ends where the live period begins. A
+                            re-check runs the same fixed parameters over the
+                            whole year again, and demotes if they no longer
+                            pass - which is the point of running it. */}
+                        <button
+                          disabled={busy}
+                          title="Re-run this combination's backtest over the last year with its promoted parameters. If it no longer passes, it is demoted."
+                          onClick={() => act(() => api.confirmCombination(row.id, true))}
+                        >
+                          Re-run backtest
+                        </button>
                         <button disabled={busy} onClick={() => act(() => api.revokePromotion(row.id, 'revoked by hand'))}>
                           Revoke
                         </button>
