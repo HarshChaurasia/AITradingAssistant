@@ -1,5 +1,5 @@
 const { query } = require('../db/pool');
-const { alertTradeClosed } = require('../alerts/events');
+const { alertTradeClosed, alertDaySummary } = require('../alerts/events');
 const { recordTradeResult } = require('../risk/state');
 
 /**
@@ -169,6 +169,37 @@ async function reconcile({ bridge, mode = 'demo', logger = console }) {
     }
 
     closed += 1;
+  }
+
+  /**
+   * The day's scoreboard, once, after everything that closed this cycle.
+   *
+   * Sent per cycle rather than per trade on purpose: three positions closing
+   * on the same tick would otherwise send three identical summaries, and a
+   * summary that repeats stops being read.
+   */
+  if (closed > 0) {
+    try {
+      const today = await query(
+        `SELECT t.pnl, st.name AS strategy
+           FROM trades t
+           LEFT JOIN signals sig    ON sig.id = t.signal_id
+           LEFT JOIN strategies st  ON st.id = sig.strategy_id
+          WHERE t.mode = ? AND t.status = 'CLOSED' AND DATE(t.closed_at) = UTC_DATE()
+          ORDER BY t.closed_at`,
+        [mode]
+      );
+      await alertDaySummary({
+        mode,
+        closedNow: closed,
+        trades: today,
+        // What the broker still holds. Read from the same snapshot the closes
+        // were detected against, so it can never disagree with them.
+        openPositions: positions.length
+      });
+    } catch (error) {
+      logger.error(`day summary alert failed: ${error.message}`);
+    }
   }
 
   // A broker position with no trade row. Reported, never touched: closing a

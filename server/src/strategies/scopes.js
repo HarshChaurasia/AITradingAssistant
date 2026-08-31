@@ -77,6 +77,45 @@ async function setScopes(strategyId, entries = []) {
   return listScopes(strategyId);
 }
 
+/**
+ * Extra timeframes that exist only because a strategy is scoped to them.
+ *
+ * Scoping a scalp to M5 while M5 is not a traded timeframe looked like it
+ * enabled M5 and did nothing at all - the loop only walks the traded list, so
+ * those rows were dead and the symptom was a strategy that never fired.
+ *
+ * Each extra timeframe carries ONLY the strategies explicitly scoped to it.
+ * Widening the traded list itself would be much worse than the bug: an
+ * unscoped strategy runs everywhere by definition, so one M5 scope row would
+ * quietly start trading every other strategy on M5 too.
+ */
+function scopeOnlyTimeframes({ strategies, scopes, active }) {
+  const extras = new Map();
+  for (const strategy of strategies) {
+    for (const scope of scopes.get(strategy.id) || []) {
+      if (!scope.timeframe || active.includes(scope.timeframe)) continue;
+      if (!extras.has(scope.timeframe)) extras.set(scope.timeframe, []);
+      const bucket = extras.get(scope.timeframe);
+      if (!bucket.some((s) => s.id === strategy.id)) bucket.push(strategy);
+    }
+  }
+  return extras;
+}
+
+/**
+ * The same list, resolved from the database, for callers that only need the
+ * timeframe names - the scheduler syncs candles and sets signal expiry per
+ * timeframe, and a timeframe it does not know about would generate signals
+ * against stale candles that then never expire.
+ */
+async function scopeOnlyTimeframeNames(active) {
+  const strategies = await query(
+    'SELECT id FROM strategies WHERE enabled = 1 AND superseded_at IS NULL'
+  );
+  const scopes = await loadScopes();
+  return [...scopeOnlyTimeframes({ strategies, scopes, active }).keys()];
+}
+
 async function listScopes(strategyId) {
   return query(
     `SELECT sc.id, sc.symbol_id AS symbolId, sc.timeframe, sym.broker_symbol AS symbol
@@ -88,4 +127,7 @@ async function listScopes(strategyId) {
   );
 }
 
-module.exports = { loadScopes, scopeAllows, setScopes, listScopes };
+module.exports = {
+  loadScopes, scopeAllows, setScopes, listScopes,
+  scopeOnlyTimeframes, scopeOnlyTimeframeNames
+};

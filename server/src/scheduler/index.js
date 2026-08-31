@@ -10,6 +10,7 @@ const { loadOperationsSettings, expiryMinutesFor } = require('../settings/operat
 const { evaluateMissedSignals } = require('../signals/missed');
 const { refreshMarketStatus, watchedSymbols } = require('../market/market-hours');
 const { syncCalendar } = require('../news/calendar');
+const { scopeOnlyTimeframeNames } = require('../strategies/scopes');
 
 /**
  * Periodic candle sync followed by signal generation.
@@ -65,7 +66,21 @@ function createScheduler({
 
   async function runOnce() {
     const settings = await loadSettingsFn();
-    const activeTimeframes = timeframes || settings.tradedTimeframes;
+    const tradedTimeframes = timeframes || settings.tradedTimeframes;
+
+    /**
+     * A timeframe reached only through a strategy scope still needs candles
+     * and still needs its signals expired. Leaving it out of this list was
+     * the whole reason a scope on an untraded timeframe did nothing: the
+     * generator would have been asked for signals on candles nobody synced.
+     */
+    let scopedOnly = [];
+    try {
+      scopedOnly = await scopeOnlyTimeframeNames(tradedTimeframes);
+    } catch (error) {
+      logger.error(`scope timeframe lookup failed: ${error.message}`);
+    }
+    const activeTimeframes = [...tradedTimeframes, ...scopedOnly];
 
     // Before anything else: is the broker link alive? A dropped MT5
     // connection never recovers on its own - the bridge cannot retry from
@@ -127,7 +142,12 @@ function createScheduler({
       symbolsSynced += 1;
     }
 
-    const signals = await generateSignalsFn({ mode, timeframes: activeTimeframes, settings });
+    // Only the TRADED list is handed over. The generator derives the
+    // scope-only timeframes itself, and it must, because there each one runs
+    // just the strategies scoped to it - passing the widened list would make
+    // every unscoped strategy trade there too, which is the opposite of what
+    // narrowing a strategy is for.
+    const signals = await generateSignalsFn({ mode, timeframes: tradedTimeframes, settings });
 
     // Execute before reconciling: a fill from this tick is then picked up by
     // the next one, rather than being reconciled against a broker that has

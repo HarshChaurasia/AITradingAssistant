@@ -158,6 +158,75 @@ async function alertTradeClosed({
   await safely(send, lines.join('\n'), logger);
 }
 
+/**
+ * The day so far, sent once a position closes.
+ *
+ * A single close is unreadable on its own: -1,392 is a disaster or a rounding
+ * error depending on what the other eleven trades did, and that context only
+ * existed on a screen nobody was looking at. This is the running scoreboard,
+ * so the number in the message above it can be read in proportion.
+ *
+ * Deliberately sent per RECONCILE CYCLE rather than per trade. Three
+ * positions closing on the same tick would otherwise produce three identical
+ * summaries, and a summary that repeats stops being read.
+ */
+async function alertDaySummary({
+  mode, closedNow = 0, trades = [], openPositions = null,
+  send = sendAlert, logger = console
+}) {
+  const net = trades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  const wins = trades.filter((t) => Number(t.pnl) > 0);
+  const losses = trades.filter((t) => Number(t.pnl) <= 0);
+  const grossWin = wins.reduce((sum, t) => sum + Number(t.pnl), 0);
+  const grossLoss = losses.reduce((sum, t) => sum + Number(t.pnl), 0);
+
+  const lines = [
+    `TODAY so far  ${net >= 0 ? '+' : ''}${net.toFixed(2)}`,
+    `${trades.length} closed (${wins.length}W / ${losses.length}L)` +
+      (closedNow > 1 ? `, ${closedNow} of them just now` : '')
+  ];
+
+  if (trades.length > 0) {
+    lines.push(`won ${grossWin.toFixed(2)}  |  lost ${grossLoss.toFixed(2)}`);
+
+    // Profit factor on the day. One number that says whether the winners are
+    // actually paying for the losers, which the net alone hides on a day that
+    // is barely positive off a handful of large swings.
+    if (grossLoss < 0) {
+      lines.push(`profit factor ${(grossWin / Math.abs(grossLoss)).toFixed(2)}`);
+    }
+
+    // Per strategy. When a day goes wrong it is almost never every strategy
+    // at once, and this is what says which one to switch off.
+    const byStrategy = new Map();
+    for (const t of trades) {
+      const key = t.strategy || 'unknown';
+      const seen = byStrategy.get(key) || { pnl: 0, n: 0 };
+      seen.pnl += Number(t.pnl || 0);
+      seen.n += 1;
+      byStrategy.set(key, seen);
+    }
+    const ranked = [...byStrategy.entries()].sort((a, b) => a[1].pnl - b[1].pnl);
+    lines.push('by strategy:');
+    for (const [name, s] of ranked) {
+      lines.push(`  ${name} ${s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(2)} (${s.n})`);
+    }
+
+    const worst = ranked[0];
+    const best = ranked[ranked.length - 1];
+    if (worst && best && worst[0] !== best[0]) {
+      lines.push(`best ${best[0]}, worst ${worst[0]}`);
+    }
+  }
+
+  if (Number.isFinite(Number(openPositions))) {
+    lines.push(`${openPositions} still open`);
+  }
+
+  lines.push(`${mode} account`);
+  await safely(send, lines.join('\n'), logger);
+}
+
 async function alertDailyLossCap({ mode, realized, cap, send = sendAlert, logger = console }) {
   await safely(
     send,
@@ -219,6 +288,7 @@ module.exports = {
   alertOrderFilled,
   alertOrderFailed,
   alertTradeClosed,
+  alertDaySummary,
   alertDailyLossCap,
   alertOpportunity
 };

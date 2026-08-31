@@ -3,7 +3,7 @@ const { getCandles } = require('../market/candles');
 const { getStrategy, mergeParams } = require('../strategies/registry');
 const { assessSignal } = require('../risk/engine');
 const { loadOperationsSettings } = require('../settings/operations');
-const { loadScopes, scopeAllows } = require('../strategies/scopes');
+const { loadScopes, scopeAllows, scopeOnlyTimeframes } = require('../strategies/scopes');
 
 const DEFAULT_TIMEFRAME = 'H1';
 const HISTORY_BARS = 500;
@@ -142,17 +142,25 @@ async function generateSignals({
   const symbols = await query('SELECT * FROM symbols WHERE enabled = 1');
   const scopes = await loadScopes();
 
+  // Timeframes reached only through a scope row. See scopeOnlyTimeframes.
+  const extras = scopeOnlyTimeframes({ strategies, scopes, active });
+
   const byTimeframe = {};
   let evaluated = 0;
   let created = 0;
   let skipped = 0;
   let outOfScope = 0;
 
-  for (const tf of active) {
+  const passes = [
+    ...active.map((tf) => ({ timeframe: tf, strategies })),
+    ...[...extras.entries()].map(([tf, only]) => ({ timeframe: tf, strategies: only, scopedOnly: true }))
+  ];
+
+  for (const pass of passes) {
     const result = await generateForTimeframe({
-      mode, now, timeframe: tf, strategies, symbols, autoApprove, scopes
+      mode, now, timeframe: pass.timeframe, strategies: pass.strategies, symbols, autoApprove, scopes
     });
-    byTimeframe[tf] = result;
+    byTimeframe[pass.timeframe] = { ...result, scopedOnly: pass.scopedOnly === true };
     evaluated += result.evaluated;
     created += result.created;
     skipped += result.skipped;
@@ -160,7 +168,13 @@ async function generateSignals({
   }
 
   return {
-    evaluated, created, skipped, outOfScope, autoApprove, timeframes: active, byTimeframe
+    evaluated,
+    created,
+    skipped,
+    outOfScope,
+    autoApprove,
+    timeframes: passes.map((p) => p.timeframe),
+    byTimeframe
   };
 }
 

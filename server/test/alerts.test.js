@@ -133,3 +133,46 @@ test('the event helpers are silent under test even with a token configured', asy
 
   assert.equal(attempted, 0, 'the execution tests must not be able to reach Telegram');
 });
+
+/**
+ * The day summary. The number in a close message is unreadable alone: -1,392
+ * is a disaster or a rounding error depending on what the other trades did.
+ */
+test('the day summary totals the day and names the worst strategy', async () => {
+  const events = require('../src/alerts/events');
+  let text = null;
+  const send = async (message) => { text = message; };
+
+  await events.alertDaySummary({
+    mode: 'demo',
+    closedNow: 2,
+    openPositions: 4,
+    trades: [
+      { pnl: 500, strategy: 'trend-breakout' },
+      { pnl: -1392.32, strategy: 'macd-trend' },
+      { pnl: 250, strategy: 'trend-breakout' }
+    ],
+    send
+  });
+
+  assert.match(text, /TODAY so far {2}-642\.32/);
+  assert.match(text, /3 closed \(2W \/ 1L\)/);
+  assert.match(text, /2 of them just now/);
+  assert.match(text, /profit factor 0\.54/);
+  assert.match(text, /trend-breakout \+750\.00 \(2\)/);
+  assert.match(text, /macd-trend -1392\.32 \(1\)/);
+  assert.match(text, /worst macd-trend/);
+  assert.match(text, /4 still open/);
+});
+
+test('a day summary with no closes yet still reports a total rather than failing', async () => {
+  const events = require('../src/alerts/events');
+  let text = null;
+  await events.alertDaySummary({ mode: 'demo', trades: [], send: async (m) => { text = m; } });
+
+  assert.match(text, /TODAY so far {2}\+0\.00/);
+  assert.match(text, /0 closed/);
+  // No profit factor, because dividing by no losses is not a number anyone
+  // should be shown.
+  assert.doesNotMatch(text, /profit factor/);
+});
