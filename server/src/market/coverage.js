@@ -14,6 +14,16 @@ const { syncCandles, barsForMonths, TIMEFRAMES } = require('./candles');
 // judge whether stored history spans what it claims: 1,000 M5 bars is three
 // days, and calling that "6 months of data" because the oldest row is six
 // months old would be worse than saying nothing.
+// A year, not six months. The walk-forward split judges on the last 30% of
+// the window, so six months of history leaves six WEEKS to be judged on - and
+// the commonest backtest failure by far was "only N trades, 50 required".
+// A year gives the out-of-sample half enough bars to mean something.
+const DEFAULT_MONTHS = 12;
+
+// The bar of green in the coverage grid. Matches DEFAULT_MONTHS so the grid
+// and the button cannot disagree about what "enough" is.
+const SUFFICIENT_MONTHS = DEFAULT_MONTHS;
+
 const BARS_PER_MONTH = {
   M1: 30240, M5: 6048, M15: 2016, M30: 1008, H1: 504, H4: 126, D1: 22
 };
@@ -56,7 +66,7 @@ async function coverage({ timeframes = TIMEFRAMES } = {}) {
           firstBar: row.first_bar,
           lastBar: row.last_bar,
           months,
-          sufficient: months >= 6
+          sufficient: months >= SUFFICIENT_MONTHS
         };
       })
     }))
@@ -68,14 +78,14 @@ async function coverage({ timeframes = TIMEFRAMES } = {}) {
  *
  * Strictly sequential. Concurrent history requests to a single MT5 terminal
  * are how the bridge stops answering, and this asks for tens of thousands of
- * bars per combination - six months of M5 alone is about 52,000.
+ * bars per combination - a year of M5 alone is about 105,000.
  *
  * `onProgress` is called before each request so a caller can publish where it
  * has got to; the whole job takes minutes, and a button that appears to hang
  * for that long is indistinguishable from a broken one.
  */
 async function backfillAll(bridge, {
-  months = 6,
+  months = DEFAULT_MONTHS,
   timeframes = TIMEFRAMES,
   onProgress = null,
   logger = console
@@ -143,7 +153,7 @@ function createBackfillJob() {
   return {
     isRunning: () => running,
     snapshot: () => ({ running, progress, last }),
-    async start(bridge, { months = 6, timeframes = TIMEFRAMES, logger = console } = {}) {
+    async start(bridge, { months = DEFAULT_MONTHS, timeframes = TIMEFRAMES, logger = console } = {}) {
       if (running) return { started: false, reason: 'a backfill is already running' };
       running = true;
       progress = { done: 0, total: 0, symbol: null, timeframe: null, phase: 'starting' };
@@ -164,4 +174,7 @@ function createBackfillJob() {
   };
 }
 
-module.exports = { coverage, backfillAll, createBackfillJob, BARS_PER_MONTH };
+module.exports = {
+  coverage, backfillAll, createBackfillJob,
+  BARS_PER_MONTH, DEFAULT_MONTHS, SUFFICIENT_MONTHS
+};

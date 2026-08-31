@@ -14,6 +14,19 @@ const DEFAULT_RISK_SETTINGS = {
   // operator's call to make - but it is one idea at several times the size,
   // so the dial exists and the account cap above still bounds the total.
   maxPositionsPerSymbol: 10,
+  // Positions in one instrument facing the SAME WAY.
+  //
+  // The measured cost of not having this: of 50 closed trades, 29 arrived in
+  // bursts of three or more within ten minutes, and those 29 lost 20,518
+  // between them - 64% of everything lost. One move fires five strategies,
+  // they all buy, and they all stop out together. The per-trade risk cap held
+  // perfectly and the account still fell 6.5% in ten minutes, because the
+  // positions were not independent.
+  //
+  // A hedge is not correlated exposure, so this counts direction rather than
+  // instrument: being long and short BTCUSD at once is a different statement
+  // from being long it five times.
+  maxSameDirectionPerSymbol: 1,
   consecutiveLossLimit: 3,
   // The base blackout either side of a high-impact event, in minutes. It is a
   // FLOOR, not the whole story: the window also scales with the timeframe

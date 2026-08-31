@@ -283,6 +283,12 @@ export default function Settings() {
           onChange={(v) => setRisk({ ...risk, maxPositionsPerSymbol: v })}
         />
         <NumberField
+          label="Max same-direction positions per symbol"
+          hint="The one the account's history argues hardest for: of 50 closed trades, 29 arrived in bursts of three or more within ten minutes and lost 20,518 between them — 64% of everything lost. Each obeyed the 1% cap exactly; they simply were not independent bets. A hedge is not correlated exposure, so this counts direction, not instrument."
+          value={risk.maxSameDirectionPerSymbol}
+          onChange={(v) => setRisk({ ...risk, maxSameDirectionPerSymbol: v })}
+        />
+        <NumberField
           label="Consecutive loss limit"
           hint="Trips the kill switch after this many losers in a row."
           value={risk.consecutiveLossLimit}

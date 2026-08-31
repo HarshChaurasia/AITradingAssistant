@@ -236,3 +236,45 @@ test('reconciliation does not overwrite a good entry price with a missing one', 
   const [trade] = await query('SELECT entry_price FROM trades WHERE broker_ticket = 778');
   assert.equal(Number(trade.entry_price), 12345.67, 'a position with no price_open must not zero the stored one');
 });
+
+/**
+ * Which level ended the trade.
+ *
+ * Every broker-closed trade was recorded as 'BROKER', so 50 closed trades
+ * carried one exit reason between them and nothing could tell a stop from a
+ * target without recomputing prices by hand.
+ */
+test('a close at the stop is recorded as SL, at the target as TP', () => {
+  const { exitReasonFor } = require('../src/execution/reconciler');
+
+  assert.equal(exitReasonFor({ side: 'BUY', entry: 100, close: 95, sl: 95, tp: 110 }), 'SL');
+  assert.equal(exitReasonFor({ side: 'BUY', entry: 100, close: 110, sl: 95, tp: 110 }), 'TP');
+  assert.equal(exitReasonFor({ side: 'SELL', entry: 100, close: 105, sl: 105, tp: 90 }), 'SL');
+  assert.equal(exitReasonFor({ side: 'SELL', entry: 100, close: 90, sl: 105, tp: 90 }), 'TP');
+});
+
+test('a stop that slipped is still a stop', () => {
+  const { exitReasonFor } = require('../src/execution/reconciler');
+
+  // A stop fills at the next available price, not exactly on the number. Half
+  // a point past a five-point stop is a stop, and calling it 'BROKER' would
+  // hide the most common exit in the journal.
+  assert.equal(exitReasonFor({ side: 'BUY', entry: 100, close: 94.6, sl: 95, tp: 110 }), 'SL');
+});
+
+test('a close nowhere near either level claims nothing', () => {
+  const { exitReasonFor } = require('../src/execution/reconciler');
+
+  // Closed by hand, by the broker, or on margin. Guessing here would be worse
+  // than saying so.
+  assert.equal(exitReasonFor({ side: 'BUY', entry: 100, close: 103, sl: 95, tp: 110 }), 'BROKER');
+  assert.equal(exitReasonFor({ side: 'BUY', entry: 100, close: 103, sl: 95, tp: null }), 'BROKER');
+});
+
+test('a trade with no usable levels is not guessed at', () => {
+  const { exitReasonFor } = require('../src/execution/reconciler');
+
+  assert.equal(exitReasonFor({ side: 'BUY', entry: 100, close: 95, sl: null, tp: 110 }), 'BROKER');
+  // A zero-width stop would divide the tolerance by nothing.
+  assert.equal(exitReasonFor({ side: 'BUY', entry: 100, close: 100, sl: 100, tp: 110 }), 'BROKER');
+});

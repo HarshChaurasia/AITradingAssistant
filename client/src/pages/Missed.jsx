@@ -59,9 +59,12 @@ export default function Missed() {
   if (!data) return <section className="panel"><p className="muted">Loading…</p></section>;
 
   const { summary, rows } = data;
+  // Grouped by GATE, not by message. The messages carry the numbers for their
+  // own bar, so charting them gave one bar per signal - a list wearing a
+  // summary's clothes.
   const chart = summary.byReason.map((r) => ({
     ...r,
-    label: r.reason.length > 28 ? `${r.reason.slice(0, 26)}…` : r.reason
+    label: r.label.length > 28 ? `${r.label.slice(0, 26)}…` : r.label
   }));
 
   return (
@@ -129,14 +132,26 @@ export default function Missed() {
         <table className="table">
           <thead>
             <tr>
-              <th>Rejection reason</th><th>Refused</th><th>Right</th><th>Cost us</th>
+              <th>What refused it</th><th>Refused</th><th>Right</th><th>Cost us</th>
               <th>Undecided</th><th>Accuracy</th><th>Net R</th>
             </tr>
           </thead>
           <tbody>
             {summary.byReason.map((r) => (
-              <tr key={r.reason}>
-                <td>{r.reason}</td>
+              <tr key={r.key}>
+                <td>
+                  <strong>{r.label}</strong>
+                  <br />
+                  {r.gate && <small className="muted">{r.gate}</small>}
+                  {/* The variants within one gate. Numbers are stripped when
+                      they are grouped, so this is where the actual figures
+                      live - one line per distinct wording, with its count. */}
+                  {r.variants.map((v) => (
+                    <div key={v.example} className="muted variant">
+                      {v.count > 1 && <span className="badge">{v.count}×</span>} {v.example}
+                    </div>
+                  ))}
+                </td>
                 <td>{r.total}</td>
                 <td className="up">{r.correct}</td>
                 <td className="down">{r.costly}</td>
@@ -147,6 +162,14 @@ export default function Missed() {
             ))}
           </tbody>
         </table>
+
+        <p className="muted">
+          Grouped by the gate that refused the setup, not by the message it printed. Every message
+          carries the numbers for its own bar, so grouping by text produced one row per signal —
+          a list wearing a summary's clothes. <strong>Accuracy</strong> counts only the decided
+          cases: of the setups this gate refused that later reached a level, how often refusing was
+          right. A gate below about 50% is refusing setups that would have paid.
+        </p>
       </div>
 
       <div className="panel">
@@ -165,7 +188,7 @@ export default function Missed() {
             <thead>
               <tr>
                 <th>Bar</th><th>Symbol</th><th>Side</th><th>TF</th><th>Strategy</th>
-                <th>Blocked by</th><th>Outcome</th><th>R</th><th>Verdict</th>
+                <th>Blocked by</th><th>Detail</th><th>Outcome</th><th>R</th><th>Verdict</th>
               </tr>
             </thead>
             <tbody>
@@ -176,6 +199,7 @@ export default function Missed() {
                   <td><span className={`badge ${r.side === 'BUY' ? 'buy' : 'sell'}`}>{r.side}</span></td>
                   <td>{r.timeframe}</td>
                   <td>{r.strategy}</td>
+                  <td>{r.gate || '—'}</td>
                   <td className="muted" title={r.blockedBy || ''}>{r.blockedBy}</td>
                   <td title={r.detail || ''}>{r.outcome}</td>
                   <td className={(r.rMultiple ?? 0) >= 0 ? 'up' : 'down'}>{num(r.rMultiple)}</td>

@@ -45,6 +45,38 @@ async function realisedResultFor(bridge, ticket) {
   };
 }
 
+/**
+ * Which level ended the trade.
+ *
+ * Everything the broker closed was recorded as 'BROKER', so 50 closed trades
+ * carried one exit reason between them and no analysis could tell a stop from
+ * a target without recomputing prices by hand. The broker does not say, so
+ * this reads the close price against the levels the trade was opened with.
+ *
+ * A tolerance of a tenth of the stop distance, because a stop fills at the
+ * next available price rather than exactly on the number - gaps and slippage
+ * routinely land a few points past it. Anything further from either level was
+ * closed by something other than the levels: by hand, by the broker, or by
+ * margin, and saying 'BROKER' there is the honest answer.
+ */
+function exitReasonFor({ side, entry, close, sl, tp }) {
+  const e = Number(entry);
+  const c = Number(close);
+  const stop = Number(sl);
+  if (!Number.isFinite(e) || !Number.isFinite(c) || !Number.isFinite(stop)) return 'BROKER';
+
+  const risk = Math.abs(e - stop);
+  if (!(risk > 0)) return 'BROKER';
+  const tolerance = risk * 0.1;
+
+  if (Math.abs(c - stop) <= tolerance) return 'SL';
+
+  const target = tp === null || tp === undefined ? null : Number(tp);
+  if (target !== null && Number.isFinite(target) && Math.abs(c - target) <= tolerance) return 'TP';
+
+  return 'BROKER';
+}
+
 async function snapshotEquity(bridge, mode) {
   try {
     const account = await bridge.account();
@@ -102,6 +134,16 @@ async function reconcile({ bridge, mode = 'demo', logger = console }) {
     const realised = await realisedResultFor(bridge, ticket);
     const pnl = realised ? realised.pnl : 0;
 
+    const exitReason = realised
+      ? exitReasonFor({
+        side: trade.side,
+        entry: trade.entry_price,
+        close: realised.closePrice,
+        sl: trade.sl,
+        tp: trade.tp
+      })
+      : 'BROKER_NO_HISTORY';
+
     await query(
       `UPDATE trades
           SET status = 'CLOSED', closed_at = UTC_TIMESTAMP(), last_synced_at = UTC_TIMESTAMP(),
@@ -112,7 +154,7 @@ async function reconcile({ bridge, mode = 'demo', logger = console }) {
         pnl,
         realised ? Math.abs(realised.commission) : 0,
         realised ? realised.swap : 0,
-        realised ? 'BROKER' : 'BROKER_NO_HISTORY',
+        exitReason,
         trade.id
       ]
     );
@@ -159,7 +201,7 @@ async function reconcile({ bridge, mode = 'demo', logger = console }) {
         strategy: context?.strategy_name,
         timeframe: context?.timeframe,
         heldMinutes: context?.held_minutes,
-        exitReason: realised ? 'BROKER' : null,
+        exitReason,
         dayPnl: today?.day_pnl
       });
     } catch (error) {
@@ -221,4 +263,4 @@ async function reconcile({ bridge, mode = 'demo', logger = console }) {
   return { openAtBroker: positions.length, closed, updated, orphans };
 }
 
-module.exports = { reconcile };
+module.exports = { reconcile, exitReasonFor };

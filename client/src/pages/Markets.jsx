@@ -19,7 +19,7 @@ const TIMEFRAMES = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 function DataCoverage() {
   const [data, setData] = useState(null);
   const [job, setJob] = useState(null);
-  const [months, setMonths] = useState(6);
+  const [months, setMonths] = useState(12);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
@@ -61,7 +61,7 @@ function DataCoverage() {
       <div className="toolbar">
         <label className="field">months
           <select value={months} onChange={(e) => setMonths(Number(e.target.value))} disabled={running}>
-            {[1, 3, 6, 12].map((m) => <option key={m} value={m}>{m}</option>)}
+            {[1, 3, 6, 12, 24].map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </label>
         <button disabled={running} onClick={start}>
@@ -118,14 +118,14 @@ function DataCoverage() {
       </table>
 
       <p className="muted">
-        <span className="up">green</span> is six months or more — enough for a walk-forward test to
+        <span className="up">green</span> is twelve months or more — enough for a walk-forward test to
         reach its 50-trade minimum on most timeframes. Grey is thinner than that; a backtest on it
         will fail on trade count rather than on merit. Hover a cell for the exact bar count and date
         range.
       </p>
       <p className="muted">
         A closed market has nothing new to give, so weekend backfills of FX and gold will report
-        fewer bars than asked for. Six months of M5 is about 52,000 bars per symbol, so a full run
+        fewer bars than asked for. A year of M5 is about 105,000 bars per symbol, so a full run
         takes several minutes — it runs in the background and this updates as it goes.
       </p>
     </section>
@@ -210,13 +210,13 @@ export default function Markets() {
           disabled={busy || !symbolId}
           onClick={() =>
             run(async () => {
-              const result = await api.syncCandles(symbolId, timeframe, 6);
+              const result = await api.syncCandles(symbolId, timeframe, 12);
               setCandles(await api.candles(symbolId, timeframe, 500));
-              setNotice(`backfilled ${result.stored} of ${result.received} ${timeframe} bars (asked for six months, ${result.requestedBars})`);
+              setNotice(`backfilled ${result.stored} of ${result.received} ${timeframe} bars (asked for 12 months, ${result.requestedBars})`);
             })
           }
         >
-          Backfill 6 months of {timeframe}
+          Backfill 12 months of {timeframe}
         </button>
 
         {selected && (

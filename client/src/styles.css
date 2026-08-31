@@ -830,3 +830,11 @@ button {
   height: 15px;
   accent-color: var(--green);
 }
+
+/* One line per distinct wording inside a rejection-gate group. Small and
+   indented: the group's label is the heading, these are its evidence. */
+.variant {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}

@@ -113,3 +113,42 @@ test('a signal with no target can still be graded on its stop', () => {
 
   assert.equal(result.outcome, 'sl');
 });
+
+/**
+ * Grouping. The messages carry the numbers for their own bar, so grouping by
+ * text produced one bucket per signal - thirty-one rows saying the same thing
+ * about the same gate, which is a list wearing a summary's clothes.
+ */
+test('the failing gate is read from the decision, not from its message', () => {
+  const { blockedByGate } = require('../src/signals/missed');
+
+  const decision = {
+    checks: [
+      { name: 'stop_loss_present', passed: true, detail: 'stop at 1.16' },
+      { name: 'notional_exposure', passed: false, detail: '1147806 notional against a cap of 668825' },
+      { name: 'position_size', passed: false, detail: '9.9 lots risking 1337.65' }
+    ]
+  };
+
+  const result = blockedByGate(decision);
+  assert.equal(result.gate, 'notional_exposure', 'the first failing gate is the one to name');
+  assert.deepEqual(result.gates, ['notional_exposure', 'position_size']);
+  assert.match(result.message, /1147806 notional/);
+});
+
+test('a decision where every gate passed names no gate', () => {
+  const { blockedByGate } = require('../src/signals/missed');
+
+  assert.equal(blockedByGate({ checks: [{ name: 'kill_switch', passed: true }] }).gate, null);
+  assert.equal(blockedByGate(null).gate, null);
+});
+
+test('two readings of one gate collapse to a single shape', () => {
+  const { messageShape } = require('../src/signals/missed');
+
+  const a = messageShape('1147806 notional against a cap of 668825 (5x equity)');
+  const b = messageShape('4906606 notional against a cap of 668825 (5x equity)');
+
+  assert.equal(a, b, 'the numbers are what differ; the statement is the same');
+  assert.equal(messageShape(null), null);
+});

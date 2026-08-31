@@ -5,7 +5,7 @@ const { syncCandles, getCandles, barsForMonths, TIMEFRAMES } = require('../marke
 const { refreshMarketStatus, marketStatus } = require('../market/market-hours');
 const { syncCalendar, upcoming } = require('../news/calendar');
 const { scalpViability } = require('../market/scalp-viability');
-const { coverage, createBackfillJob } = require('../market/coverage');
+const { coverage, createBackfillJob, DEFAULT_MONTHS } = require('../market/coverage');
 const { query } = require('../db/pool');
 
 function createMarketRouter({ bridge, backfillJob = createBackfillJob() }) {
@@ -38,7 +38,7 @@ function createMarketRouter({ bridge, backfillJob = createBackfillJob() }) {
     if (backfillJob.isRunning()) {
       return res.status(202).json({ started: false, reason: 'a backfill is already running' });
     }
-    const months = Math.min(Math.max(Number(req.body?.months) || 6, 1), 24);
+    const months = Math.min(Math.max(Number(req.body?.months) || DEFAULT_MONTHS, 1), 24);
     backfillJob.start(bridge, { months }).catch(() => {
       // The job records its own failures in the snapshot; a rejected promise
       // here must not take the process down.
@@ -212,7 +212,7 @@ function createMarketRouter({ bridge, backfillJob = createBackfillJob() }) {
       // function of the timeframe, and a flat 2,000 meant three weeks of M5
       // against nine years of D1.
       const bars = months
-        ? barsForMonths(timeframe, Math.min(Math.max(Number(months) || 6, 1), 60))
+        ? barsForMonths(timeframe, Math.min(Math.max(Number(months) || DEFAULT_MONTHS, 1), 60))
         : Math.min(Number(count) || 1000, 120000);
 
       res.json({

@@ -56,6 +56,22 @@ async function openPositionsForSymbol({ symbolId, mode }) {
   return Number(rows[0].n);
 }
 
+/**
+ * Open positions in one instrument facing the same way.
+ *
+ * Direction matters and instrument alone does not. Long and short BTCUSD at
+ * once is a hedge; long BTCUSD five times is one idea at five times the size,
+ * and it is the second that emptied the account.
+ */
+async function sameDirectionForSymbol({ symbolId, mode, side }) {
+  const rows = await query(
+    `SELECT COUNT(*) AS n FROM trades
+      WHERE mode = ? AND symbol_id = ? AND side = ? AND status IN ('OPEN', 'PENDING')`,
+    [mode, symbolId, side]
+  );
+  return Number(rows[0].n);
+}
+
 async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, now = new Date() }) {
   const settings = await loadRiskSettings();
   const day = currentTradingDay(now);
@@ -140,6 +156,23 @@ async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, 
   const symbolAtCap = sameSymbolOpen >= perSymbolLimit;
   add('positions_per_symbol', !symbolAtCap,
     `${sameSymbolOpen} open on ${symbol.broker_symbol}, limit ${perSymbolLimit}`);
+
+  // 8b. ...and how much of it facing the same way?
+  //
+  // This is the gate the account's history argues hardest for. Of 50 closed
+  // trades, 29 arrived in bursts of three or more within ten minutes and lost
+  // 20,518 between them - 64% of everything lost. Each obeyed the 1% cap
+  // exactly. They were not independent bets: one move, five strategies, one
+  // direction, and they hit their stops together.
+  //
+  // Counting direction rather than instrument keeps a genuine hedge legal.
+  const sameSideLimit = settings.maxSameDirectionPerSymbol;
+  const sameSideOpen = mode === 'backtest'
+    ? 0
+    : await sameDirectionForSymbol({ symbolId: symbol.id, mode, side: signal.side });
+  const sameSideAtCap = sameSideOpen >= sameSideLimit;
+  add('correlated_exposure', !sameSideAtCap,
+    `${sameSideOpen} already ${signal.side} on ${symbol.broker_symbol}, limit ${sameSideLimit}`);
 
   // 9. Position size.
   const sized = hasStop

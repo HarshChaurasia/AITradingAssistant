@@ -409,3 +409,118 @@ test('a backtest is exempt: market hours have no meaning when replaying history'
 
   assert.equal(d.checks.find((c) => c.name === 'market_open').passed, true);
 });
+
+
+/**
+ * The correlated-exposure gate counts rows in `trades`, so these tests need a
+ * real symbols row for the foreign key to hang off. SYMBOL above is a plain
+ * object handed straight to the engine; it never touches the database.
+ */
+async function withOpenPosition(side) {
+  const { query } = require('../src/db/pool');
+  await query(
+    `INSERT INTO symbols (broker_symbol, digits, point, contract_size, tick_size,
+       tick_value, min_lot, lot_step, max_lot, enabled, synced_at, trade_mode,
+       market_open, market_reason, market_checked_at)
+     VALUES ('EURUSD', 5, 0.00001, 100000, 0.00001, 1, 0.01, 0.01, 500, 1,
+             UTC_TIMESTAMP(), 4, 1, 'open (test fixture)', UTC_TIMESTAMP())`
+  );
+  const [row] = await query('SELECT id FROM symbols WHERE broker_symbol = ?', ['EURUSD']);
+  return row.id;
+}
+
+/**
+ * The gate the account's own history argues hardest for.
+ *
+ * Of 50 closed trades, 29 arrived in bursts of three or more within ten
+ * minutes and lost 20,518 between them - 64% of everything lost. Each obeyed
+ * the 1% per-trade cap exactly; they simply were not independent bets.
+ */
+test('a second position in the same direction on the same symbol is refused', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { query } = require('../src/db/pool');
+
+  const symbolId = await withOpenPosition();
+  await query(
+    `INSERT INTO trades (symbol_id, mode, side, lot, entry_price, sl, opened_at, status)
+     VALUES (?, 'demo', 'BUY', 0.1, 1.1, 1.09, UTC_TIMESTAMP(), 'OPEN')`,
+    [symbolId]
+  );
+
+  const d = await assessSignal({
+    signal: { ...GOOD_SIGNAL, symbol_id: symbolId },
+    symbol: { ...SYMBOL, id: symbolId }, mode: 'demo', balance: 10000, openPositions: 1
+  });
+
+  const gate = check(d, 'correlated_exposure');
+  assert.equal(gate.passed, false);
+  assert.match(gate.detail, /1 already BUY on EURUSD, limit 1/);
+  assert.equal(d.allowed, false);
+});
+
+test('a hedge is not correlated exposure', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { query } = require('../src/db/pool');
+
+  // Short EURUSD already open. Going long is a different statement from
+  // going long five times, so the gate counts direction, not instrument.
+  const symbolId = await withOpenPosition();
+  await query(
+    `INSERT INTO trades (symbol_id, mode, side, lot, entry_price, sl, opened_at, status)
+     VALUES (?, 'demo', 'SELL', 0.1, 1.1, 1.11, UTC_TIMESTAMP(), 'OPEN')`,
+    [symbolId]
+  );
+
+  const d = await assessSignal({
+    signal: { ...GOOD_SIGNAL, symbol_id: symbolId },
+    symbol: { ...SYMBOL, id: symbolId }, mode: 'demo', balance: 10000, openPositions: 1
+  });
+
+  assert.equal(check(d, 'correlated_exposure').passed, true);
+  assert.equal(d.allowed, true, d.denialReasons.join('; '));
+});
+
+test('the correlated exposure limit is configurable', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { saveRiskSettings } = require('../src/risk/settings');
+  const { query } = require('../src/db/pool');
+
+  await saveRiskSettings({ maxSameDirectionPerSymbol: 3 });
+  const symbolId = await withOpenPosition();
+  await query(
+    `INSERT INTO trades (symbol_id, mode, side, lot, entry_price, sl, opened_at, status)
+     VALUES (?, 'demo', 'BUY', 0.1, 1.1, 1.09, UTC_TIMESTAMP(), 'OPEN')`,
+    [symbolId]
+  );
+
+  const d = await assessSignal({
+    signal: { ...GOOD_SIGNAL, symbol_id: symbolId },
+    symbol: { ...SYMBOL, id: symbolId }, mode: 'demo', balance: 10000, openPositions: 1
+  });
+
+  assert.equal(check(d, 'correlated_exposure').passed, true,
+    'an operator who wants three of the same idea may have them');
+});
+
+test('a backtest is exempt: it has no live positions to be correlated with', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { query } = require('../src/db/pool');
+
+  const symbolId = await withOpenPosition();
+  await query(
+    `INSERT INTO trades (symbol_id, mode, side, lot, entry_price, sl, opened_at, status)
+     VALUES (?, 'backtest', 'BUY', 0.1, 1.1, 1.09, UTC_TIMESTAMP(), 'OPEN')`,
+    [symbolId]
+  );
+
+  const d = await assessSignal({
+    signal: { ...GOOD_SIGNAL, symbol_id: symbolId },
+    symbol: { ...SYMBOL, id: symbolId }, mode: 'backtest', balance: 10000, openPositions: 0
+  });
+
+  assert.equal(check(d, 'correlated_exposure').passed, true);
+});

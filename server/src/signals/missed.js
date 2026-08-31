@@ -205,6 +205,41 @@ async function evaluateMissedSignals({
 }
 
 /**
+ * Which gate refused this signal, and what it said.
+ *
+ * The message is the wrong thing to group on. Every denial reason carries the
+ * numbers for that bar - "1147806 notional against a cap of 668825" - so
+ * grouping by text produced one bucket per signal, which is a list, not a
+ * summary. The gate NAME is the thing there are only ten of, and it is what
+ * an operator can actually act on: a threshold to argue with.
+ *
+ * The message shape is kept alongside it, with the numbers replaced, so the
+ * variants within one gate stay countable without fragmenting the group.
+ */
+function blockedByGate(decision) {
+  const failed = (decision?.checks || []).filter((c) => c.passed === false);
+  if (failed.length === 0) return { gate: null, gates: [], message: null };
+
+  return {
+    // Several gates can fail at once and all of them are evaluated. The first
+    // is the one to name: they are ordered cheapest-and-most-fundamental
+    // first, so it is the one closest to the real cause.
+    gate: failed[0].name,
+    gates: failed.map((c) => c.name),
+    message: failed[0].detail || null
+  };
+}
+
+// Collapse the numbers out of a message so two readings of the same gate land
+// in one shape: "1147806 notional against a cap of 668825" and "4906606
+// notional against a cap of 668825" are the same sentence.
+function messageShape(message) {
+  return message === null || message === undefined
+    ? null
+    : String(message).replace(/-?[\d.]+/g, '#');
+}
+
+/**
  * The missed-signals view: what was refused, why, and what happened next.
  */
 async function listMissedSignals({ mode = 'demo', verdict = null, limit = 100 } = {}) {
@@ -246,6 +281,9 @@ async function listMissedSignals({ mode = 'demo', verdict = null, limit = 100 } 
     // The first denial reason is the one that actually stopped it. Every gate
     // is evaluated, but this is the one worth tuning.
     blockedBy: r.decision?.denialReasons?.[0] || r.reason || null,
+    // ...and the gate it came from, which is what the summary groups on.
+    gate: blockedByGate(r.decision).gate,
+    gates: blockedByGate(r.decision).gates,
     outcome: r.outcome,
     verdict: r.verdict,
     rMultiple: r.r_multiple === null ? null : Number(r.r_multiple),
@@ -256,36 +294,97 @@ async function listMissedSignals({ mode = 'demo', verdict = null, limit = 100 } 
 }
 
 /**
- * Which rejection reasons are costing money.
+ * Which gates are costing money.
  *
  * This is the whole point of the exercise. A gate that refuses ten setups and
  * saves nine of them is working; one that refuses ten and saves two is a gate
  * whose threshold needs looking at.
+ *
+ * Grouped by GATE rather than by message. The messages carry the numbers for
+ * their own bar, so grouping by text gave one bucket per signal - thirty-one
+ * rows saying the same thing about the same gate, which is a list wearing a
+ * summary's clothes. Within a gate the distinct message shapes are counted
+ * separately, so a gate that fails for two different reasons still shows both.
  */
+// Gate names are precise and unreadable. These are the same statements in
+// words, because "notional_exposure" tells an operator nothing about what to
+// change and "the position would be too large for the account" does.
+const GATE_LABELS = {
+  stop_loss_present: 'no stop loss on the signal',
+  kill_switch: 'kill switch was on',
+  daily_loss_cap: 'daily loss cap already reached',
+  max_concurrent_positions: 'too many positions open',
+  positions_per_symbol: 'too many positions on that symbol',
+  news_blackout: 'high-impact news too close',
+  strategy_promoted: 'strategy not promoted for live',
+  market_open: 'market was closed',
+  position_size: 'position size below the broker minimum',
+  notional_exposure: 'position would be too large for the account',
+  correlated_exposure: 'already exposed the same way on that symbol'
+};
+
 async function missedSummary({ mode = 'demo' } = {}) {
   const rows = await listMissedSignals({ mode, limit: 500 });
 
   const buckets = new Map();
   for (const row of rows) {
-    const key = row.blockedBy || 'unknown';
-    const bucket = buckets.get(key)
-      || { reason: key, total: 0, costly: 0, correct: 0, undecided: 0, netR: 0 };
+    // A decision normally carries its gates. A hand-rejected signal, or one
+    // written before the gates were recorded, carries only a sentence - so
+    // fall back to that sentence with its numbers stripped, which still
+    // groups the readings of one cause together rather than dropping them all
+    // into an 'unknown' bin that explains nothing.
+    const key = row.gate || messageShape(row.blockedBy) || 'unknown';
+    const bucket = buckets.get(key) || {
+      gate: row.gate,
+      label: GATE_LABELS[key] || row.blockedBy || key,
+      total: 0,
+      costly: 0,
+      correct: 0,
+      undecided: 0,
+      netR: 0,
+      example: null,
+      variants: new Map()
+    };
+
     bucket.total += 1;
     bucket[row.verdict] += 1;
     if (row.rMultiple !== null && row.verdict !== 'undecided') bucket.netR += row.rMultiple;
+    if (!bucket.example) bucket.example = row.blockedBy;
+
+    const shape = messageShape(row.blockedBy);
+    if (shape) {
+      const variant = bucket.variants.get(shape) || { count: 0, example: row.blockedBy };
+      variant.count += 1;
+      bucket.variants.set(shape, variant);
+    }
+
+    bucket.key = key;
     buckets.set(key, bucket);
   }
 
   const byReason = [...buckets.values()]
     .map((b) => ({
-      ...b,
+      gate: b.gate,
+      label: b.label,
+      key: b.key,
+      // Kept under its old name so nothing that reads this breaks; it is now
+      // the readable label rather than one signal's message.
+      reason: b.label,
+      total: b.total,
+      costly: b.costly,
+      correct: b.correct,
+      undecided: b.undecided,
+      example: b.example,
+      variants: [...b.variants.values()]
+        .sort((x, y) => y.count - x.count)
+        .map((v) => ({ count: v.count, example: v.example })),
       netR: Number(b.netR.toFixed(2)),
       // Of the decided cases, how often was refusing the right call?
       accuracyPct: (b.costly + b.correct) > 0
         ? Number(((b.correct / (b.costly + b.correct)) * 100).toFixed(1))
         : null
     }))
-    // Worst first: the reason that cost the most is the one to look at.
+    // Worst first: the gate that cost the most is the one to look at.
     .sort((a, b) => a.netR - b.netR);
 
   const correct = rows.filter((r) => r.verdict === 'correct').length;
@@ -306,6 +405,9 @@ async function missedSummary({ mode = 'demo' } = {}) {
 
 module.exports = {
   replay,
+  blockedByGate,
+  messageShape,
+  GATE_LABELS,
   evaluateMissedSignals,
   listMissedSignals,
   missedSummary,
