@@ -11,18 +11,30 @@ const { strategies } = require('../src/strategies/registry');
  * does another. These tests exist to make that impossible to ship.
  */
 
-// A series with trends both ways, pullbacks, and genuine breakouts, so both
-// strategies actually fire somewhere across it.
+// A series with trends both ways, pullbacks, and genuine breakouts, so every
+// strategy actually fires somewhere across it.
+//
+// The bar RANGE has to vary as well as the closes. The scalping strategies key
+// off a bar being much larger than the recent average, and a series of
+// uniformly sized bars never produces one - which the vacuous-fixture guard
+// below caught the moment micro-breakout was added.
 function varietySeries(length = 900) {
   const candles = [];
   for (let i = 0; i < length; i += 1) {
     const drift = i < length / 2 ? i * 0.05 : (length - i) * 0.05;
     const wave = Math.sin(i / 7) * 1.5 + Math.sin(i / 23) * 3;
     const close = 100 + drift + wave;
+
+    // Every eleventh bar is a burst: several times the usual range, and
+    // closing at its extreme, which is what a momentum bar looks like.
+    const burst = i % 11 === 0;
+    const half = burst ? 0.9 : 0.08;
+    const direction = Math.sin(i / 7) >= 0 ? 1 : -1;
+
     candles.push({
       open: close - 0.03,
-      high: close + 0.08,
-      low: close - 0.08,
+      high: close + (burst ? half * (direction > 0 ? 1.6 : 0.4) : half),
+      low: close - (burst ? half * (direction > 0 ? 0.4 : 1.6) : half),
       close
     });
   }

@@ -10,6 +10,7 @@ import Performance from './pages/Performance';
 import Settings from './pages/Settings';
 import Strategies from './pages/Strategies';
 import Missed from './pages/Missed';
+import Scalping from './pages/Scalping';
 import { api } from './api';
 
 function App() {
@@ -36,6 +37,7 @@ function App() {
           <button className={view === 'signals' ? 'nav active' : 'nav'} onClick={() => setView('signals')}>Signals</button>
           <button className={view === 'missed' ? 'nav active' : 'nav'} onClick={() => setView('missed')}>Missed signals</button>
           <button className={view === 'strategies' ? 'nav active' : 'nav'} onClick={() => setView('strategies')}>Strategies</button>
+          <button className={view === 'scalping' ? 'nav active' : 'nav'} onClick={() => setView('scalping')}>Scalping</button>
           <button className={view === 'backtests' ? 'nav active' : 'nav'} onClick={() => setView('backtests')}>Backtests</button>
           <button className={view === 'execution' ? 'nav active' : 'nav'} onClick={() => setView('execution')}>Execution</button>
           <button className={view === 'risk' ? 'nav active' : 'nav'} onClick={() => setView('risk')}>Risk</button>
@@ -63,6 +65,7 @@ function App() {
           : view === 'signals' ? <Signals />
           : view === 'missed' ? <Missed />
           : view === 'strategies' ? <Strategies />
+          : view === 'scalping' ? <Scalping />
           : view === 'settings' ? <Settings />
           : view === 'execution' ? <Trades />
           : view === 'risk' ? <Risk />

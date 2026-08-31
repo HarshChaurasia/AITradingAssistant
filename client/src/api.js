@@ -110,6 +110,7 @@ export const api = {
   news: (hours = 72, minImpact = 'HIGH') =>
     request(`/api/news?hours=${hours}&minImpact=${minImpact}`),
   syncNews: () => request('/api/news/sync', { method: 'POST' }),
+  scalpViability: () => request('/api/scalp-viability'),
   refreshMarketStatus: () => request('/api/symbols/market-status/refresh', { method: 'POST' }),
   scannerLive: () => request('/api/scanner/live'),
   startScan: (mode = 'demo') =>

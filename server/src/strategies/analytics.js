@@ -202,6 +202,9 @@ async function strategyAnalytics({ mode = 'demo' } = {}) {
       id: row.id,
       name: row.name,
       version: row.version,
+      // Scalps are judged separately: minutes rather than days, many more
+      // trades, and spread rather than direction decides them.
+      kind: row.kind || 'swing',
       status: row.status,
       enabled: row.enabled === 1,
       params: row.params,

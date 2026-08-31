@@ -276,7 +276,9 @@ export default function Strategies() {
         promoting anything.
       </p>
 
-      {[...data.strategies].sort((a, b) => a.rank - b.rank).map((s) => (
+      {/* Scalps have their own screen: they hold for minutes and take many more
+          trades, so pooling them here would drown these numbers in theirs. */}
+      {[...data.strategies].filter((s) => s.kind !== 'scalp').sort((a, b) => a.rank - b.rank).map((s) => (
         <div key={s.id} className="panel">
           <div className="panel-header">
             <h3>

@@ -9,6 +9,8 @@ const maCrossover = require('./ma-crossover');
 const smartMoney = require('./smart-money');
 const liquiditySweep = require('./liquidity-sweep');
 const rsiDivergence = require('./rsi-divergence');
+const microBreakout = require('./micro-breakout');
+const stretchFade = require('./stretch-fade');
 
 const strategies = [
   trendBreakout,
@@ -25,6 +27,11 @@ const strategies = [
   liquiditySweep,
   // Buys exhaustion rather than strength, which is a different family again.
   rsiDivergence,
+  // Scalps. Held for minutes, closed on a time stop whether or not price has
+  // reached a level, and restricted to timeframes where the spread leaves room
+  // to work - measured, not assumed.
+  microBreakout,
+  stretchFade,
   // A deliberate baseline. If a more elaborate strategy cannot beat the oldest
   // trend rule there is, the elaboration is not earning its complexity.
   maCrossover
@@ -50,10 +57,10 @@ function mergeParams(strategy, overrides) {
 async function registerStrategies() {
   for (const s of strategies) {
     await query(
-      `INSERT INTO strategies (name, version, params, status, enabled, created_at)
-       VALUES (?, ?, CAST(? AS JSON), 'draft', 0, UTC_TIMESTAMP())
-       ON DUPLICATE KEY UPDATE params = VALUES(params)`,
-      [s.name, s.version, JSON.stringify(s.defaultParams)]
+      `INSERT INTO strategies (name, version, kind, params, status, enabled, created_at)
+       VALUES (?, ?, ?, CAST(? AS JSON), 'draft', 0, UTC_TIMESTAMP())
+       ON DUPLICATE KEY UPDATE params = VALUES(params), kind = VALUES(kind)`,
+      [s.name, s.version, s.kind || 'swing', JSON.stringify(s.defaultParams)]
     );
   }
   // Retire older versions of anything shipped here.

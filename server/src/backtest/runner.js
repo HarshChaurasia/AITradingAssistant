@@ -142,7 +142,14 @@ async function executeRun({
 
   const mergedParams = mergeParams(strategy, params);
   const startingBalance = options.startingBalance ?? 10000;
-  const runOptions = { startingBalance, riskPctPerTrade: 1, ...options };
+  // A time stop is a property of the setup, not of the caller, so it comes
+  // from the strategy's own parameters rather than from the request.
+  const runOptions = {
+    startingBalance,
+    riskPctPerTrade: 1,
+    maxHoldBars: mergedParams.maxHoldBars ?? null,
+    ...options
+  };
 
   // A date range narrows the tradeable window and the walk-forward split is
   // then taken WITHIN it, so "the last year" means a year of in-sample and

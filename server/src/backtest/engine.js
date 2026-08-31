@@ -14,7 +14,7 @@ const { sizePosition } = require('../risk/sizing');
  *     rounded up.
  */
 
-function resolveExit({ position, candle, spreadPrice, slippagePrice }) {
+function resolveExit({ position, candle, spreadPrice, slippagePrice, barsHeld = 0, maxHoldBars = null }) {
   const { side, sl, tp } = position;
 
   const hitStop = side === 'BUY' ? candle.low <= sl : candle.high >= sl;
@@ -28,6 +28,21 @@ function resolveExit({ position, candle, spreadPrice, slippagePrice }) {
   if (hitTarget) {
     return { price: applyExitSlippage({ side, price: tp, spreadPrice, slippagePrice }), reason: 'TP' };
   }
+
+  // A time stop, checked only after the price levels.
+  //
+  // This is what makes a scalp a scalp: the premise is that a move happens
+  // within a few bars, and if it has not the reason for the trade has expired
+  // whether or not price has reached either level. Checking it before the
+  // levels would let a bar that actually hit the target be recorded as a
+  // timeout, which flatters nothing but corrupts the exit-reason breakdown.
+  if (maxHoldBars !== null && barsHeld >= maxHoldBars) {
+    return {
+      price: applyExitSlippage({ side, price: candle.close, spreadPrice, slippagePrice }),
+      reason: 'TIME'
+    };
+  }
+
   return null;
 }
 
@@ -37,6 +52,11 @@ function runBacktest({ candles, strategy, params, symbol, options }) {
     riskPctPerTrade = 1,
     spreadPrice = 0,
     slippagePrice = 0,
+    // Bars a position may be held before it is closed at market regardless of
+    // where price sits. Null means no time stop, which is every swing
+    // strategy; scalps set it, because a scalp that has not worked within a
+    // few bars is a scalp whose premise has expired.
+    maxHoldBars = null,
     commissionPerLot = 0,
     maxConcurrentPositions = 1,
     // Trading window, as bar indices into `candles`. Indicators always see the
@@ -90,6 +110,7 @@ function runBacktest({ candles, strategy, params, symbol, options }) {
         open = {
           side: pending.side,
           lot,
+          entryIndex: i,
           entryTime: candle.open_time,
           entryPrice,
           sl: pending.sl,
@@ -102,7 +123,12 @@ function runBacktest({ candles, strategy, params, symbol, options }) {
 
     // 2. An open position may exit on this bar's range.
     if (open) {
-      const exit = resolveExit({ position: open, candle, spreadPrice, slippagePrice });
+      // barsHeld counts bars SINCE entry, so a position opened on this bar is
+      // held zero bars and a maxHoldBars of 1 exits on the following one.
+      const barsHeld = i - open.entryIndex;
+      const exit = resolveExit({
+        position: open, candle, spreadPrice, slippagePrice, barsHeld, maxHoldBars
+      });
       if (exit) {
         const gross = pnlFor({
           side: open.side,

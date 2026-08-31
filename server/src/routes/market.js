@@ -4,6 +4,7 @@ const { syncSymbols, listSymbols, setSymbolEnabled, setSymbolWatched } = require
 const { syncCandles, getCandles, barsForMonths, TIMEFRAMES } = require('../market/candles');
 const { refreshMarketStatus, marketStatus } = require('../market/market-hours');
 const { syncCalendar, upcoming } = require('../news/calendar');
+const { scalpViability } = require('../market/scalp-viability');
 const { query } = require('../db/pool');
 
 function createMarketRouter({ bridge }) {
@@ -104,6 +105,21 @@ function createMarketRouter({ bridge }) {
       }
 
       res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Whether a scalp can pay for its own spread, per symbol and timeframe.
+   *
+   * The scalping screen leads with this because it decides the answer before
+   * any strategy is chosen: a scalp targets a fraction of a bar, and if the
+   * round trip costs most of that fraction there is nothing left to win.
+   */
+  router.get('/scalp-viability', async (req, res, next) => {
+    try {
+      res.json(await scalpViability());
     } catch (error) {
       next(error);
     }
