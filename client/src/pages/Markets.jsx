@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import CandleChart from '../components/CandleChart';
 import SymbolSelect from '../components/SymbolSelect';
 import { api } from '../api';
+import SpreadViability from '../components/SpreadViability';
 
 const TIMEFRAMES = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 
@@ -175,6 +176,10 @@ export default function Markets() {
   return (
     <>
     <DataCoverage />
+
+    {/* What the spread leaves to work with. A property of the instrument,
+        so it belongs beside its history rather than on a strategy screen. */}
+    <SpreadViability />
 
     <section className="panel">
       <div className="panel-header">

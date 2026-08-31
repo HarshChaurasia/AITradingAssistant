@@ -5,6 +5,7 @@ const { assessSignal } = require('../risk/engine');
 const { loadOperationsSettings } = require('../settings/operations');
 const { loadScopes, scopeAllows, scopeOnlyTimeframes } = require('../strategies/scopes');
 const { loadPromotedParams } = require('../strategies/promotions');
+const { loadRiskSettings } = require('../risk/settings');
 
 const DEFAULT_TIMEFRAME = 'H1';
 const HISTORY_BARS = 500;
@@ -33,7 +34,12 @@ async function countOpenPositions(mode) {
  */
 async function generateForTimeframe({
   mode, now, timeframe, strategies, symbols, autoApprove, scopes = new Map(),
-  promoted = new Map()
+  promoted = new Map(),
+  // When promotion drives generation this is the exact set of
+  // strategy|symbol pairs to evaluate. Narrowing by timeframe alone still
+  // walked every enabled symbol, so four of every five evaluations existed
+  // only to be refused by the promotion gate a moment later.
+  allowedPairs = null
 }) {
 
   let evaluated = 0;
@@ -53,6 +59,10 @@ async function generateForTimeframe({
     for (const symbol of symbols) {
       // A strategy with no scope rows runs everywhere, so this only ever
       // narrows a strategy someone has deliberately narrowed.
+      if (allowedPairs && !allowedPairs.has(`${strategyRow.id}|${symbol.id}`)) {
+        outOfScope += 1;
+        continue;
+      }
       if (!scopeAllows(scopes, { strategyId: strategyRow.id, symbolId: symbol.id, timeframe })) {
         outOfScope += 1;
         continue;
@@ -156,8 +166,35 @@ async function generateSignals({
   // The parameters each combination actually earned its promotion with.
   const promoted = await loadPromotedParams();
 
+  /**
+   * When promotion is enforced, the promoted combinations ARE the work list.
+   *
+   * Two mechanisms had ended up narrowing the same thing. A promotion names
+   * its strategy, symbol and timeframe exactly, and a leftover scope row
+   * naming different ones would silently block a combination that had earned
+   * its place - the promotion says trade XAUUSD M30, the stale scope says M5
+   * only, and nothing anywhere reports the disagreement.
+   *
+   * Driving generation from promotions removes the conflict and most of the
+   * work with it: 13 strategies over 5 symbols and 6 timeframes is 390
+   * evaluations a cycle, of which - with two combinations enabled - 388 were
+   * evaluated only to be refused by the promotion gate a moment later.
+   */
+  const risk = await loadRiskSettings();
+  const timeframesFor = new Map();
+  if (risk.requirePromotedCombination && !timeframe) {
+    for (const key of promoted.keys()) {
+      const [strategyId, symbolId, tf] = key.split('|');
+      if (!timeframesFor.has(tf)) timeframesFor.set(tf, { strategyIds: new Set(), pairs: new Set() });
+      timeframesFor.get(tf).strategyIds.add(Number(strategyId));
+      timeframesFor.get(tf).pairs.add(`${strategyId}|${symbolId}`);
+    }
+  }
+
   // Timeframes reached only through a scope row. See scopeOnlyTimeframes.
-  const extras = scopeOnlyTimeframes({ strategies, scopes, active });
+  const extras = timeframesFor.size > 0
+    ? new Map()
+    : scopeOnlyTimeframes({ strategies, scopes, active });
 
   const byTimeframe = {};
   let evaluated = 0;
@@ -165,17 +202,28 @@ async function generateSignals({
   let skipped = 0;
   let outOfScope = 0;
 
-  const passes = [
-    ...active.map((tf) => ({ timeframe: tf, strategies })),
-    ...[...extras.entries()].map(([tf, only]) => ({ timeframe: tf, strategies: only, scopedOnly: true }))
-  ];
+  const passes = timeframesFor.size > 0
+    ? [...timeframesFor.entries()].map(([tf, entry]) => ({
+      timeframe: tf,
+      strategies: strategies.filter((st) => entry.strategyIds.has(st.id)),
+      allowedPairs: entry.pairs,
+      promotedOnly: true
+    }))
+    : [
+      ...active.map((tf) => ({ timeframe: tf, strategies })),
+      ...[...extras.entries()].map(([tf, only]) => ({ timeframe: tf, strategies: only, scopedOnly: true }))
+    ];
 
   for (const pass of passes) {
     const result = await generateForTimeframe({
       mode, now, timeframe: pass.timeframe, strategies: pass.strategies, symbols,
-      autoApprove, scopes, promoted
+      autoApprove, scopes, promoted, allowedPairs: pass.allowedPairs || null
     });
-    byTimeframe[pass.timeframe] = { ...result, scopedOnly: pass.scopedOnly === true };
+    byTimeframe[pass.timeframe] = {
+      ...result,
+      scopedOnly: pass.scopedOnly === true,
+      promotedOnly: pass.promotedOnly === true
+    };
     evaluated += result.evaluated;
     created += result.created;
     skipped += result.skipped;

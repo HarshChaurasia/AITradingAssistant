@@ -135,20 +135,6 @@ export const api = {
       body: JSON.stringify(patch)
     }),
   strategyAnalytics: (mode = 'demo') => request(`/api/strategies/analytics?mode=${mode}`),
-  patchStrategy: (id, patch) =>
-    request(`/api/strategies/${id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(patch)
-    }),
-  strategyScopes: (id) => request(`/api/strategies/${id}/scopes`),
-  saveStrategyScopes: (id, scopes) =>
-    request(`/api/strategies/${id}/scopes`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scopes })
-    }),
-  // The strategy lab: parameter search, judged on data the search never saw.
   labStudies: (params = '') => request(`/api/lab/studies${params}`),
   startLabStudy: (payload) =>
     request('/api/lab/studies', {

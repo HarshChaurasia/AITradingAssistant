@@ -282,3 +282,28 @@ test('a combination that fails confirmation goes back, not forward', async (t) =
   assert.match(row.demote_reason, /confirmation failed/);
   assert.equal((await loadPromotedKeys()).size, 0, 'it must not trade');
 });
+
+/**
+ * The scheduler syncs candles and sets signal expiry per timeframe, so a
+ * promoted timeframe it does not know about would have signals generated
+ * against stale bars that then never expire.
+ *
+ * This used to be derived from scope rows. Those are gone - they had ended up
+ * narrowing the same thing as promotions by a second route, and a leftover
+ * row could silently contradict a promotion - so a promotion is now the only
+ * thing that says a timeframe matters.
+ */
+test('a promoted timeframe is discoverable, so its candles get synced', async (t) => {
+  const ctx = await promoted(t, { timeframe: 'M5' });
+  const { promotedTimeframes } = require('../src/strategies/promotions');
+
+  // Awaiting confirmation is not yet trading, so it needs nothing synced.
+  assert.deepEqual(await promotedTimeframes(), []);
+
+  await ctx.query("UPDATE strategy_promotions SET stage = 'enabled' WHERE id = ?", [ctx.promotion.id]);
+  assert.deepEqual(await promotedTimeframes(), ['M5']);
+
+  // ...and stops being needed the moment it is demoted.
+  await ctx.query("UPDATE strategy_promotions SET stage = 'demoted' WHERE id = ?", [ctx.promotion.id]);
+  assert.deepEqual(await promotedTimeframes(), []);
+});

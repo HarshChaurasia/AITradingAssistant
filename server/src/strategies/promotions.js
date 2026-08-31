@@ -178,6 +178,23 @@ async function loadPromotedParams() {
   );
 }
 
+/**
+ * The timeframes that promoted combinations actually trade on.
+ *
+ * The scheduler syncs candles and sets signal expiry per timeframe, so a
+ * timeframe it does not know about would have signals generated against stale
+ * bars that then never expire. This used to be derived from scope rows; those
+ * are gone, and a promotion is now the only thing that says a timeframe
+ * matters.
+ */
+async function promotedTimeframes() {
+  const rows = await query(
+    `SELECT DISTINCT timeframe FROM strategy_promotions
+      WHERE stage = 'enabled' AND revoked_at IS NULL`
+  );
+  return rows.map((r) => r.timeframe);
+}
+
 function isPromoted(promoted, { strategyId, symbolId, timeframe }) {
   if (!promoted || promoted.size === 0) return false;
   return promoted.has(`${strategyId}|${symbolId}|${timeframe}`);
@@ -208,5 +225,6 @@ module.exports = {
   listStudies,
   loadPromotedKeys,
   loadPromotedParams,
+  promotedTimeframes,
   isPromoted
 };

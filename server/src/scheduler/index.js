@@ -11,6 +11,7 @@ const { evaluateMissedSignals } = require('../signals/missed');
 const { refreshMarketStatus, watchedSymbols } = require('../market/market-hours');
 const { syncCalendar } = require('../news/calendar');
 const { scopeOnlyTimeframeNames } = require('../strategies/scopes');
+const { promotedTimeframes } = require('../strategies/promotions');
 const { confirmPending, reviewLivePerformance } = require('../strategies/lifecycle');
 
 /**
@@ -79,7 +80,15 @@ function createScheduler({
      */
     let scopedOnly = [];
     try {
-      scopedOnly = await scopeOnlyTimeframeNames(tradedTimeframes);
+      // A promoted timeframe needs candles and an expiry rule just as much as
+      // a traded one. Deriving this from scope rows was fine while scopes
+      // existed; a promotion is now the only thing that says a timeframe
+      // matters, and missing one would generate signals against stale bars
+      // that then never expire.
+      const promoted = await promotedTimeframes();
+      const scoped = await scopeOnlyTimeframeNames(tradedTimeframes);
+      scopedOnly = [...new Set([...promoted, ...scoped])]
+        .filter((tf) => !tradedTimeframes.includes(tf));
     } catch (error) {
       logger.error(`scope timeframe lookup failed: ${error.message}`);
     }
