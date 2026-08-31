@@ -7,6 +7,63 @@ const { computeMetrics } = require('./metrics');
 const DEFAULT_THRESHOLDS = { minProfitFactor: 1.3, maxDrawdownPct: 15, minTrades: 50 };
 
 /**
+ * How the history is divided.
+ *
+ * Two windows were enough while parameters were fixed. They are NOT enough
+ * once we search over parameters: rank fifty candidates by their
+ * out-of-sample result and the winner's out-of-sample number is no longer
+ * out-of-sample - it is the maximum of fifty draws, which is a different and
+ * much larger quantity.
+ *
+ * So three windows, with one rule each:
+ *
+ *   optimise  the ONLY data a parameter search may look at
+ *   validate  scored once, for the single best in-sample candidate
+ *   holdout   scored once, ever, and only for a validate-passer
+ *
+ * Promotion requires the holdout. Everything upstream of it has been seen by
+ * a selection process and is therefore optimistic by construction.
+ */
+const DEFAULT_SPLIT = { optimise: 0.5, validate: 0.25, holdout: 0.25 };
+
+/**
+ * Trades a window must hold before its numbers mean anything.
+ *
+ * A flat 50 is unreachable by arithmetic rather than by merit on the slower
+ * bars: a year of D1 is about 260 bars, so a quarter of it is 65 bars, and no
+ * strategy takes 50 trades in 65 bars. Measured on this account, D1 and H4
+ * runs produced one to five out-of-sample trades - and were then reported as
+ * failures alongside genuinely bad strategies, which hid the difference.
+ *
+ * These are the counts a window of that timeframe can actually deliver at a
+ * plausible trade frequency, so a failure means the strategy, not the clock.
+ */
+const MIN_TRADES_BY_TIMEFRAME = {
+  M1: 100, M5: 60, M15: 40, M30: 30, H1: 25, H4: 15, D1: 8
+};
+
+function minTradesFor(timeframe, thresholds) {
+  // An operator who sets the number explicitly means it.
+  if (thresholds.minTradesExplicit) return thresholds.minTrades;
+  return MIN_TRADES_BY_TIMEFRAME[timeframe] ?? thresholds.minTrades;
+}
+
+/**
+ * A profit factor computed from a handful of trades is not evidence.
+ *
+ * Three winners and no losers is a profit factor of Infinity, and it sorted
+ * straight to the top of the sweep table above a strategy with 300 trades and
+ * a real edge. Any ranking has to treat too-few-trades as unrankable rather
+ * than as excellent.
+ */
+function rankableProfitFactor(metrics, timeframe, thresholds = DEFAULT_THRESHOLDS) {
+  const pf = Number(metrics?.profitFactor);
+  if (!Number.isFinite(pf)) return 0;
+  if (Number(metrics?.trades || 0) < minTradesFor(timeframe, thresholds)) return 0;
+  return pf;
+}
+
+/**
  * Split point for walk-forward validation.
  *
  * Returns index ranges rather than sliced arrays. The engine is then handed
@@ -26,8 +83,9 @@ function splitWalkForward(candles, { inSampleFraction = 0.7 } = {}) {
   };
 }
 
-function evaluateThresholds(metrics, thresholds) {
+function evaluateThresholds(metrics, thresholds, timeframe = null) {
   const failures = [];
+  const minTrades = timeframe ? minTradesFor(timeframe, thresholds) : thresholds.minTrades;
 
   if (metrics.profitFactor < thresholds.minProfitFactor) {
     failures.push(
@@ -39,8 +97,11 @@ function evaluateThresholds(metrics, thresholds) {
       `max drawdown ${metrics.maxDrawdownPct.toFixed(2)}% exceeds ${thresholds.maxDrawdownPct}%`
     );
   }
-  if (metrics.trades < thresholds.minTrades) {
-    failures.push(`only ${metrics.trades} trades, ${thresholds.minTrades} required`);
+  if (metrics.trades < minTrades) {
+    failures.push(
+      `only ${metrics.trades} trades, ${minTrades} required` +
+      (timeframe ? ` for ${timeframe}` : '')
+    );
   }
   if (metrics.expectancy <= 0) {
     failures.push(`expectancy ${metrics.expectancy.toFixed(4)} is not positive`);
@@ -188,22 +249,60 @@ async function executeRun({
   const metrics = computeMetrics(full.trades, { startingBalance });
 
   // The split is taken across the chosen window, not the whole store.
+  //
+  // Three windows, not two. See DEFAULT_SPLIT: once a parameter search is in
+  // the picture, the window it ranked candidates on has been selected against
+  // and can no longer serve as the verdict.
   const span = rangeTo - rangeFrom;
-  const cut = rangeFrom + Math.floor(span * (options.inSampleFraction ?? 0.7));
-  const inSampleRange = { tradeFrom: rangeFrom, tradeTo: cut };
-  const outOfSampleRange = { tradeFrom: cut, tradeTo: rangeTo };
+  const split = { ...DEFAULT_SPLIT, ...(options.split || {}) };
+
+  // `inSampleFraction` is still honoured for callers that predate the third
+  // window - the tests and the single-run screen - and collapses cleanly to
+  // the old two-window behaviour when it is given.
+  const legacyTwoWindow = options.inSampleFraction !== undefined
+    && options.inSampleFraction !== null;
+
+  const optimiseEnd = rangeFrom + Math.floor(span * (legacyTwoWindow
+    ? options.inSampleFraction
+    : split.optimise));
+  const validateEnd = legacyTwoWindow
+    ? rangeTo
+    : rangeFrom + Math.floor(span * (split.optimise + split.validate));
+
+  const optimiseRange = { tradeFrom: rangeFrom, tradeTo: optimiseEnd };
+  const validateRange = { tradeFrom: optimiseEnd, tradeTo: validateEnd };
+  const holdoutRange = { tradeFrom: validateEnd, tradeTo: rangeTo };
+
   const inResult = runBacktest({
     candles, strategy, params: mergedParams, symbol,
-    options: { ...runOptions, ...inSampleRange }
+    options: { ...runOptions, ...optimiseRange }
   });
   const outResult = runBacktest({
     candles, strategy, params: mergedParams, symbol,
-    options: { ...runOptions, ...outOfSampleRange }
+    options: { ...runOptions, ...validateRange }
   });
+  // Skipped entirely in the legacy two-window shape, where validate already
+  // runs to the end of the range and a holdout would be zero bars wide.
+  const holdResult = legacyTwoWindow || holdoutRange.tradeTo - holdoutRange.tradeFrom < 2
+    ? null
+    : runBacktest({
+      candles, strategy, params: mergedParams, symbol,
+      options: { ...runOptions, ...holdoutRange }
+    });
 
+  // Kept under the old names because everything that reads a run expects
+  // them; `outOfSample` is the validate window, which is what it always was.
   const walkForward = {
     inSample: computeMetrics(inResult.trades, { startingBalance }),
-    outOfSample: computeMetrics(outResult.trades, { startingBalance })
+    outOfSample: computeMetrics(outResult.trades, { startingBalance }),
+    holdout: holdResult ? computeMetrics(holdResult.trades, { startingBalance }) : null
+  };
+
+  const windows = {
+    optimise: { ...optimiseRange, bars: optimiseEnd - rangeFrom },
+    validate: { ...validateRange, bars: validateEnd - optimiseEnd },
+    holdout: holdResult ? { ...holdoutRange, bars: rangeTo - validateEnd } : null,
+    legacyTwoWindow
   };
 
   /**
@@ -252,7 +351,15 @@ async function executeRun({
   // The verdict comes from out-of-sample only. Judging a strategy on the data
   // its parameters were chosen against is how overfitting reaches production.
   const thresholds = await loadThresholds();
-  const { passed, failures } = evaluateThresholds(walkForward.outOfSample, thresholds);
+  const { passed, failures } = evaluateThresholds(walkForward.outOfSample, thresholds, timeframe);
+
+  // The holdout is reported but does not decide `passed`. A single run has
+  // not been selected for, so it has nothing to be protected from; the
+  // holdout exists for the optimiser, which HAS selected, and promotion is
+  // where it does its work.
+  const holdout = walkForward.holdout
+    ? evaluateThresholds(walkForward.holdout, thresholds, timeframe)
+    : null;
 
   const strategyRow = await query('SELECT id FROM strategies WHERE name = ? AND version = ?', [
     strategy.name,
@@ -276,8 +383,10 @@ async function executeRun({
       JSON.stringify({
         full: metrics,
         walkForward,
+        windows,
         thresholds,
         failures,
+        holdout,
         skips,
         range: {
           from: candles[rangeFrom]?.open_time ?? null,
@@ -320,7 +429,7 @@ async function executeRun({
   }
 
   return {
-    runId, metrics, walkForward, passed, failures, thresholds, skips, backfill,
+    runId, metrics, walkForward, windows, passed, failures, holdout, thresholds, skips, backfill,
     bars: span,
     costs: { spreadPrice, spreadSource: options.spreadPrice ? 'caller' : 'broker' },
     // Scalps are judged partly on how they leave: a strategy whose exits are
@@ -432,4 +541,10 @@ async function sweep({
   };
 }
 
-module.exports = { executeRun, sweep, tradeWindowFor, splitWalkForward, evaluateThresholds, listRuns, getRun };
+module.exports = {
+  DEFAULT_SPLIT,
+  MIN_TRADES_BY_TIMEFRAME,
+  minTradesFor,
+  rankableProfitFactor,
+  executeRun, sweep, tradeWindowFor, splitWalkForward, evaluateThresholds, listRuns, getRun
+};

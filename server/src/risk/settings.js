@@ -46,7 +46,18 @@ const DEFAULT_RISK_SETTINGS = {
   // Position notional as a multiple of equity. A correct 1% risk on a very
   // tight stop can still imply an enormous position - measured: a $9 stop on
   // ETH produced 147 lots, about $363,000 of notional on a $133,000 account.
-  maxNotionalMultiple: 5
+  maxNotionalMultiple: 5,
+  /**
+   * Refuse any signal whose strategy/symbol/timeframe combination has not
+   * passed a backtest.
+   *
+   * OFF by default, and that default is not timidity. Switching it on with an
+   * empty promotion table halts every trade on the account - correct
+   * behaviour, and a terrible surprise. Turn it on once the lab has promoted
+   * something, which is also the first moment it can do anything but stop
+   * trading entirely.
+   */
+  requirePromotedCombination: false
 };
 
 async function loadRiskSettings() {

@@ -7,8 +7,15 @@ const {
 } = require('../strategies/analytics');
 const { loadOperationsSettings, TIMEFRAMES } = require('../settings/operations');
 const { setScopes, listScopes } = require('../strategies/scopes');
+const { createLabJob } = require('../backtest/lab');
+const {
+  listStudies, listPromotions, promoteFromStudy, revokePromotion
+} = require('../strategies/promotions');
 
 function createBacktestRouter({ bridge = null } = {}) {
+  // One lab job per server. Two grids at once would fight for the same CPU
+  // and produce two sets of half-speed progress.
+  const labJob = createLabJob();
   const router = express.Router();
 
   router.get('/strategies', async (req, res, next) => {
@@ -172,6 +179,86 @@ function createBacktestRouter({ bridge = null } = {}) {
       if (/unknown symbolId|unknown strategy/i.test(error.message)) {
         return res.status(400).json({ error: error.message });
       }
+      next(error);
+    }
+  });
+
+  /**
+   * The lab: search parameters, judge on data the search never saw, and
+   * promote only what survives the holdout.
+   *
+   * Started rather than awaited. A grid of forty-eight combinations scores
+   * tens of thousands of parameter sets, which is minutes of CPU, and a
+   * request held open that long dies somewhere in the middle with nothing to
+   * show for it.
+   */
+  router.post('/lab/studies', async (req, res, next) => {
+    try {
+      const { strategyNames, symbolIds, timeframes, iterations, options } = req.body || {};
+      if (labJob.isRunning()) {
+        return res.status(409).json({ error: 'a study is already running' });
+      }
+
+      await registerStrategies();
+      labJob.start({
+        strategyNames,
+        symbolIds,
+        timeframes,
+        iterations: Math.min(Math.max(Number(iterations) || 5, 1), 10),
+        options: options || {}
+      }).catch((error) => {
+        // Already logged inside the job; this only stops an unhandled
+        // rejection from taking the process down with it.
+        console.error(`lab study failed: ${error.message}`);
+      });
+
+      res.status(202).json({ started: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/lab/studies', async (req, res, next) => {
+    try {
+      res.json({
+        job: labJob.snapshot(),
+        studies: await listStudies({
+          limit: req.query.limit,
+          promotableOnly: req.query.promotable === 'true'
+        }),
+        promotions: await listPromotions({ includeRevoked: req.query.revoked === 'true' })
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/lab/studies/cancel', async (req, res, next) => {
+    try {
+      res.json(labJob.cancel());
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/lab/studies/:id/promote', async (req, res, next) => {
+    try {
+      res.json(await promoteFromStudy(Number(req.params.id), {
+        promotedBy: req.user?.username || 'operator',
+        force: req.body?.force === true
+      }));
+    } catch (error) {
+      if (/not promotable|unknown study/i.test(error.message)) {
+        return res.status(400).json({ error: error.message });
+      }
+      next(error);
+    }
+  });
+
+  router.post('/lab/promotions/:id/revoke', async (req, res, next) => {
+    try {
+      res.json(await revokePromotion(Number(req.params.id), { note: req.body?.note || null }));
+    } catch (error) {
       next(error);
     }
   });

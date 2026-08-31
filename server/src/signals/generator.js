@@ -4,6 +4,7 @@ const { getStrategy, mergeParams } = require('../strategies/registry');
 const { assessSignal } = require('../risk/engine');
 const { loadOperationsSettings } = require('../settings/operations');
 const { loadScopes, scopeAllows, scopeOnlyTimeframes } = require('../strategies/scopes');
+const { loadPromotedParams } = require('../strategies/promotions');
 
 const DEFAULT_TIMEFRAME = 'H1';
 const HISTORY_BARS = 500;
@@ -31,7 +32,8 @@ async function countOpenPositions(mode) {
  * which is what makes comparing their results meaningful.
  */
 async function generateForTimeframe({
-  mode, now, timeframe, strategies, symbols, autoApprove, scopes = new Map()
+  mode, now, timeframe, strategies, symbols, autoApprove, scopes = new Map(),
+  promoted = new Map()
 }) {
 
   let evaluated = 0;
@@ -61,7 +63,17 @@ async function generateForTimeframe({
 
       evaluated += 1;
 
-      const params = mergeParams(strategy, strategyRow.params);
+      /**
+       * Promoted parameters win.
+       *
+       * A promotion is evidence about a specific set of NUMBERS - measured
+       * here, macd-trend clears its holdout on XAUUSD H1 with a 5.25 ATR
+       * target and fails at the shipped 3.0. Trading the default while citing
+       * the promoted result would be the worst of both worlds: a backtest's
+       * confidence attached to a bet it never covered.
+       */
+      const promotedParams = promoted.get(`${strategyRow.id}|${symbol.id}|${timeframe}`);
+      const params = mergeParams(strategy, promotedParams || strategyRow.params);
       const context = strategy.prepare(candles, params);
 
       // Only the last CLOSED bar is considered. The newest bar is still
@@ -141,6 +153,8 @@ async function generateSignals({
   const strategies = await query('SELECT * FROM strategies WHERE enabled = 1 AND superseded_at IS NULL');
   const symbols = await query('SELECT * FROM symbols WHERE enabled = 1');
   const scopes = await loadScopes();
+  // The parameters each combination actually earned its promotion with.
+  const promoted = await loadPromotedParams();
 
   // Timeframes reached only through a scope row. See scopeOnlyTimeframes.
   const extras = scopeOnlyTimeframes({ strategies, scopes, active });
@@ -158,7 +172,8 @@ async function generateSignals({
 
   for (const pass of passes) {
     const result = await generateForTimeframe({
-      mode, now, timeframe: pass.timeframe, strategies: pass.strategies, symbols, autoApprove, scopes
+      mode, now, timeframe: pass.timeframe, strategies: pass.strategies, symbols,
+      autoApprove, scopes, promoted
     });
     byTimeframe[pass.timeframe] = { ...result, scopedOnly: pass.scopedOnly === true };
     evaluated += result.evaluated;

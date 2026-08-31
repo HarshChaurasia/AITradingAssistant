@@ -524,3 +524,111 @@ test('a backtest is exempt: it has no live positions to be correlated with', asy
 
   assert.equal(check(d, 'correlated_exposure').passed, true);
 });
+
+/**
+ * The promotion gate.
+ *
+ * Promotion is a property of the COMBINATION. Measured over a year, the same
+ * strategy reaches a profit factor of 1.40 on BTCUSD H1 and 0.43 on BTCUSD M5
+ * - one is an edge, the other is a way to pay the spread, and a per-strategy
+ * flag says the wrong thing about one of them whichever way it is set.
+ */
+test('promotion per combination is not enforced by default', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+
+  const d = await assessSignal({
+    signal: GOOD_SIGNAL, symbol: SYMBOL, mode: 'demo', balance: 10000, openPositions: 0
+  });
+
+  const gate = check(d, 'promoted_combination');
+  assert.equal(gate.passed, true);
+  assert.match(gate.detail, /not being enforced/);
+  assert.equal(d.allowed, true, d.denialReasons.join('; '));
+});
+
+test('with enforcement on, an unpromoted combination is refused', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { saveRiskSettings } = require('../src/risk/settings');
+  const { query } = require('../src/db/pool');
+  const { registerStrategies } = require('../src/strategies/registry');
+
+  await registerStrategies();
+  await saveRiskSettings({ requirePromotedCombination: true });
+
+  const symbolId = await withOpenPosition();
+  const [strategy] = await query('SELECT id FROM strategies LIMIT 1');
+
+  const d = await assessSignal({
+    signal: { ...GOOD_SIGNAL, symbol_id: symbolId, strategy_id: strategy.id, timeframe: 'H1' },
+    symbol: { ...SYMBOL, id: symbolId }, mode: 'demo', balance: 10000, openPositions: 0
+  });
+
+  const gate = check(d, 'promoted_combination');
+  assert.equal(gate.passed, false);
+  assert.match(gate.detail, /no passing backtest .* EURUSD H1/);
+  assert.equal(d.allowed, false);
+});
+
+test('a promoted combination trades, and only on the timeframe it was promoted for', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { saveRiskSettings } = require('../src/risk/settings');
+  const { query } = require('../src/db/pool');
+  const { registerStrategies } = require('../src/strategies/registry');
+  const { recordStudy, promoteFromStudy } = require('../src/strategies/promotions');
+
+  await registerStrategies();
+  await saveRiskSettings({ requirePromotedCombination: true });
+
+  const symbolId = await withOpenPosition();
+  const [strategy] = await query('SELECT id, name FROM strategies LIMIT 1');
+
+  const { studyId } = await recordStudy({
+    strategyName: strategy.name,
+    symbolId,
+    timeframe: 'H1',
+    trials: 216,
+    iterations: [],
+    winner: {
+      fullParams: { atrStopMultiple: 2.75 },
+      optimise: { profitFactor: 1.37, trades: 111 },
+      validate: { profitFactor: 1.41, trades: 62 },
+      holdout: { profitFactor: 1.35, trades: 58 }
+    },
+    validatePassed: true,
+    holdoutPassed: true,
+    promotable: true
+  });
+  await promoteFromStudy(studyId);
+
+  const signal = {
+    ...GOOD_SIGNAL, symbol_id: symbolId, strategy_id: strategy.id, timeframe: 'H1'
+  };
+  const allowed = await assessSignal({
+    signal, symbol: { ...SYMBOL, id: symbolId }, mode: 'demo', balance: 10000, openPositions: 0
+  });
+  assert.equal(check(allowed, 'promoted_combination').passed, true);
+
+  // The evidence was gathered on H1 and says nothing whatever about M5.
+  const other = await assessSignal({
+    signal: { ...signal, timeframe: 'M5' },
+    symbol: { ...SYMBOL, id: symbolId }, mode: 'demo', balance: 10000, openPositions: 0
+  });
+  assert.equal(check(other, 'promoted_combination').passed, false);
+});
+
+test('a backtest is never gated on promotion - that is how promotion is earned', async (t) => {
+  await migrated(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { saveRiskSettings } = require('../src/risk/settings');
+
+  await saveRiskSettings({ requirePromotedCombination: true });
+
+  const d = await assessSignal({
+    signal: GOOD_SIGNAL, symbol: SYMBOL, mode: 'backtest', balance: 10000, openPositions: 0
+  });
+
+  assert.equal(check(d, 'promoted_combination').passed, true);
+});

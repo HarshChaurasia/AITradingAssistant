@@ -43,8 +43,17 @@ export default function Backtests() {
   // That one default was responsible for most backtests appearing to fail.
   const [balance, setBalance] = useState(10000);
   const [riskPct, setRiskPct] = useState(1);
-  const [spread, setSpread] = useState(0.0002);
-  const [commission, setCommission] = useState(7);
+  // Blank means "ask the broker", per symbol. A single number cannot serve a
+  // sweep: 0.0002 is about right for EURUSD and is effectively zero against
+  // BTCUSD's twelve dollars, so one spread across a multi-symbol run silently
+  // flatters whichever instruments are priced in the larger units - which
+  // here is every one that matters. Measured: BTCUSD reads PF 0.85 on the
+  // forced 0.0002 and 0.78 on its own spread.
+  const [spread, setSpread] = useState('');
+  // Zero, because this account pays the spread and nothing else. At $7/lot
+  // the same BTCUSD sweep drops from 0.78 to 0.62 - a cost that is not being
+  // charged should not be deciding which strategies pass.
+  const [commission, setCommission] = useState(0);
   const [result, setResult] = useState(null);
   const [sweepResult, setSweepResult] = useState(null);
   const [sweepAllSymbols, setSweepAllSymbols] = useState(false);
@@ -93,7 +102,9 @@ export default function Backtests() {
         options: {
           startingBalance: Number(balance),
           riskPctPerTrade: Number(riskPct),
-          spreadPrice: Number(spread),
+          // Omitted rather than zeroed: the engine reads each symbol's own
+          // spread from the broker when the caller does not insist.
+          spreadPrice: spread === '' ? undefined : Number(spread),
           commissionPerLot: Number(commission),
           from: from || undefined,
           to: to || undefined
@@ -132,7 +143,9 @@ export default function Backtests() {
         options: {
           startingBalance: Number(balance),
           riskPctPerTrade: Number(riskPct),
-          spreadPrice: Number(spread),
+          // Per symbol from the broker unless overridden. Forcing one number
+          // across a sweep is what made every BTCUSD result optimistic.
+          spreadPrice: spread === '' ? undefined : Number(spread),
           commissionPerLot: Number(commission),
           from: from || undefined,
           to: to || undefined
@@ -174,8 +187,12 @@ export default function Backtests() {
         <label className="field">risk %
           <input type="number" step="0.1" value={riskPct} onChange={(e) => setRiskPct(e.target.value)} />
         </label>
-        <label className="field">spread
-          <input type="number" step="0.00001" value={spread} onChange={(e) => setSpread(e.target.value)} />
+        <label className="field" title="Leave blank to use each symbol's own spread from the broker. One number cannot serve a sweep: 0.0002 is right for EURUSD and effectively zero against BTCUSD's twelve dollars.">
+          spread <small className="muted">(blank = broker)</small>
+          <input
+            type="number" step="0.00001" placeholder="broker"
+            value={spread} onChange={(e) => setSpread(e.target.value)}
+          />
         </label>
         <label className="field">comm/lot
           <input type="number" step="0.5" value={commission} onChange={(e) => setCommission(e.target.value)} />

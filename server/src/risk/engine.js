@@ -1,4 +1,5 @@
 const { query } = require('../db/pool');
+const { loadPromotedKeys, isPromoted } = require('../strategies/promotions');
 const { sizePosition } = require('./sizing');
 const { loadRiskSettings } = require('./settings');
 const { getState, currentTradingDay } = require('./state');
@@ -125,6 +126,33 @@ async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, 
     mode === 'live'
       ? `strategy status is ${signal.strategy_status || 'unknown'}, live requires 'live'`
       : `${mode} mode does not require promotion`);
+
+  // 6b. Has THIS combination passed a backtest?
+  //
+  // Promotion is a property of the combination, never of the strategy.
+  // Measured over a year on this account, smart-money reaches a profit factor
+  // of 1.40 on BTCUSD H1 and 0.43 on BTCUSD M5 - the same code, the same
+  // instrument, and one of them is an edge while the other is a way to pay
+  // the spread. `strategies.status` cannot express that, so it said the wrong
+  // thing about one of them whichever way it was set.
+  //
+  // OFF by default, and deliberately. Switching it on with an empty promotion
+  // table stops every trade on the account, which is correct behaviour and a
+  // terrible surprise; it is an operator's decision to make once the lab has
+  // produced something to promote.
+  if (settings.requirePromotedCombination && mode !== 'backtest') {
+    const key = { strategyId: signal.strategy_id, symbolId: symbol.id, timeframe };
+    const combinationPromoted = isPromoted(await loadPromotedKeys(), key);
+    add('promoted_combination', combinationPromoted,
+      combinationPromoted
+        ? `${symbol.broker_symbol} ${timeframe} is promoted for this strategy`
+        : `no passing backtest for this strategy on ${symbol.broker_symbol} ${timeframe}`);
+  } else {
+    add('promoted_combination', true,
+      settings.requirePromotedCombination
+        ? 'backtests replay history; promotion does not apply'
+        : 'promotion per combination is not being enforced');
+  }
 
   // 7. Is the market actually open?
   //

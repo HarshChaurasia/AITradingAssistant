@@ -200,3 +200,63 @@ test('getRun returns the run with its trades', async (t) => {
   const runs = await listRuns({ limit: 10 });
   assert.ok(runs.some((r) => r.id === runId));
 });
+
+/**
+ * Thresholds a window can actually deliver.
+ *
+ * A flat 50-trade minimum is unreachable by arithmetic rather than by merit
+ * on the slower bars: a year of D1 is about 260 bars, a quarter of that is
+ * 65, and no strategy takes 50 trades in 65 bars. Those runs were then
+ * reported as failures beside genuinely bad strategies, which hid which was
+ * which.
+ */
+test('the trade minimum scales with the timeframe', () => {
+  const { minTradesFor } = require('../src/backtest/runner');
+  const thresholds = { minTrades: 50 };
+
+  assert.equal(minTradesFor('M5', thresholds), 60);
+  assert.equal(minTradesFor('H4', thresholds), 15);
+  assert.equal(minTradesFor('D1', thresholds), 8);
+  // An unknown timeframe falls back rather than inventing a number.
+  assert.equal(minTradesFor('W1', thresholds), 50);
+});
+
+test('an operator who sets the minimum explicitly is obeyed', () => {
+  const { minTradesFor } = require('../src/backtest/runner');
+
+  assert.equal(minTradesFor('D1', { minTrades: 100, minTradesExplicit: true }), 100);
+});
+
+test('the trade-count failure names the timeframe it applied', () => {
+  const { evaluateThresholds } = require('../src/backtest/runner');
+  const metrics = { profitFactor: 2, maxDrawdownPct: 1, trades: 5, expectancy: 10 };
+
+  const { passed, failures } = evaluateThresholds(
+    metrics, { minProfitFactor: 1.3, maxDrawdownPct: 15, minTrades: 50 }, 'D1'
+  );
+
+  assert.equal(passed, false);
+  assert.match(failures.join(' '), /only 5 trades, 8 required for D1/);
+});
+
+/**
+ * Three winners and no losers is a profit factor of Infinity, and it sorted
+ * straight to the top of the sweep table above a strategy with 300 trades and
+ * a real edge.
+ */
+test('a profit factor from too few trades is unrankable, not excellent', () => {
+  const { rankableProfitFactor } = require('../src/backtest/runner');
+
+  assert.equal(rankableProfitFactor({ profitFactor: Infinity, trades: 2 }, 'D1'), 0);
+  assert.equal(rankableProfitFactor({ profitFactor: 4.08, trades: 5 }, 'D1'), 0);
+  // Enough trades on that timeframe, so the number is allowed to count.
+  assert.equal(rankableProfitFactor({ profitFactor: 1.4, trades: 20 }, 'D1'), 1.4);
+  assert.equal(rankableProfitFactor({ profitFactor: NaN, trades: 500 }, 'M5'), 0);
+});
+
+test('the default split reserves a quarter of the history untouched', () => {
+  const { DEFAULT_SPLIT } = require('../src/backtest/runner');
+
+  assert.equal(DEFAULT_SPLIT.optimise + DEFAULT_SPLIT.validate + DEFAULT_SPLIT.holdout, 1);
+  assert.ok(DEFAULT_SPLIT.holdout > 0, 'promotion has nothing to rest on without it');
+});
