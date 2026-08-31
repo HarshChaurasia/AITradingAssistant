@@ -96,7 +96,18 @@ async function generateForTimeframe({
       const barTime = candles[index].open_time.slice(0, 19).replace('T', ' ');
 
       const decision = await assessSignal({
-        signal: { ...raw, symbol_id: symbol.id, strategy_status: strategyRow.status, timeframe },
+        signal: {
+          ...raw,
+          // strategy_id is not decoration: the promotion gate keys on it, and
+          // without it every key read `undefined|<symbol>|<timeframe>` and
+          // matched nothing - so with enforcement on, NOTHING could trade.
+          // The gate's own tests passed throughout, because they build a
+          // signal by hand and include it.
+          strategy_id: strategyRow.id,
+          symbol_id: symbol.id,
+          strategy_status: strategyRow.status,
+          timeframe
+        },
         symbol,
         mode,
         balance: Number(process.env.ACCOUNT_BALANCE_HINT || 10000),

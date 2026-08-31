@@ -40,6 +40,10 @@ function runnerWith({ rows, settings = {}, alerts = [] }) {
   let call = 0;
   return createScanRunner({
     loadSettingsFn: async () => ({ ...DEFAULT_OPERATIONS_SETTINGS, scanTimeframes: ['H4'], ...settings }),
+    // These tests exercise scan mechanics without a database, so promotion is
+    // injected as empty - which is also the "nothing promoted yet" path, where
+    // the scanner falls back to the broad sweep.
+    loadPromotedPairsFn: async () => new Set(),
     queryFn: async (sql) => (/FROM strategies/.test(sql)
       ? [{ id: 1, name: 'trend-breakout', status: 'demo', enabled: 1, params: {} }]
       : [{ id: 1, broker_symbol: 'BTCUSD', enabled: 1, watched: 1, digits: 2 }]),
@@ -77,6 +81,10 @@ test('a blocked setup is reported, not discarded', async () => {
 test('opportunities come back highest score first', async () => {
   const runner = createScanRunner({
     loadSettingsFn: async () => ({ ...DEFAULT_OPERATIONS_SETTINGS, scanTimeframes: ['H1', 'H4'] }),
+    // These tests exercise scan mechanics without a database, so promotion is
+    // injected as empty - which is also the "nothing promoted yet" path, where
+    // the scanner falls back to the broad sweep.
+    loadPromotedPairsFn: async () => new Set(),
     queryFn: async (sql) => (/FROM strategies/.test(sql)
       ? [{ id: 1, name: 'trend-breakout', status: 'demo', enabled: 1, params: {} }]
       : [{ id: 1, broker_symbol: 'BTCUSD', enabled: 1, watched: 1, digits: 2 }]),
@@ -139,6 +147,10 @@ test('a blocked setup never sends an alert', async () => {
 test('an alerting outage does not fail the scan', async () => {
   const runner = createScanRunner({
     loadSettingsFn: async () => ({ ...DEFAULT_OPERATIONS_SETTINGS, scanTimeframes: ['H4'] }),
+    // These tests exercise scan mechanics without a database, so promotion is
+    // injected as empty - which is also the "nothing promoted yet" path, where
+    // the scanner falls back to the broad sweep.
+    loadPromotedPairsFn: async () => new Set(),
     queryFn: async (sql) => (/FROM strategies/.test(sql)
       ? [{ id: 1, name: 'trend-breakout', status: 'demo', enabled: 1, params: {} }]
       : [{ id: 1, broker_symbol: 'BTCUSD', enabled: 1, watched: 1, digits: 2 }]),
@@ -173,6 +185,10 @@ test('a second scan is refused while one is in flight', async () => {
 
   const runner = createScanRunner({
     loadSettingsFn: async () => ({ ...DEFAULT_OPERATIONS_SETTINGS, scanTimeframes: ['H4'] }),
+    // These tests exercise scan mechanics without a database, so promotion is
+    // injected as empty - which is also the "nothing promoted yet" path, where
+    // the scanner falls back to the broad sweep.
+    loadPromotedPairsFn: async () => new Set(),
     queryFn: async (sql) => (/FROM strategies/.test(sql)
       ? [{ id: 1, name: 'trend-breakout', status: 'demo', enabled: 1, params: {} }]
       : [{ id: 1, broker_symbol: 'BTCUSD', enabled: 1, watched: 1, digits: 2 }]),
@@ -208,4 +224,64 @@ test('the snapshot carries progress while scanning and the result afterwards', a
   assert.equal(after.scanning, false);
   assert.equal(after.last.opportunities.length, 1);
   assert.ok(after.feed.length >= 2, 'the feed records the start and the finish');
+});
+
+/**
+ * "Scanning 5 symbols across H1, H4, D1, M5, M15, M30" was thirty
+ * symbol-timeframe pairs a scan while two combinations were enabled. The other
+ * twenty-eight could not produce a tradeable signal whatever they found - the
+ * promotion gate refuses them - so every setup they surfaced was an invitation
+ * to act on something the system would then decline.
+ */
+test('a scan covers only the promoted combinations', async () => {
+  const seen = [];
+  const runner = createScanRunner({
+    // macd-trend on symbol 7 H1, and nothing else.
+    loadPromotedPairsFn: async () => new Set(['1|7|H1']),
+    loadSettingsFn: async () => ({ scanTimeframes: ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'] }),
+    queryFn: async (sql) => (/FROM strategies/.test(sql)
+      ? [{ id: 1, name: 'trend-breakout', status: 'demo', enabled: 1, params: {} }]
+      : [
+        { id: 7, broker_symbol: 'XAUUSD', digits: 2, enabled: 1, watched: 1 },
+        { id: 9, broker_symbol: 'BTCUSD', digits: 2, enabled: 1, watched: 1 }
+      ]),
+    countOpenPositionsFn: async () => 0,
+    loadEvidenceFn: async () => () => null,
+    evaluateFn: async ({ symbol, timeframe }) => {
+      seen.push(`${symbol.broker_symbol} ${timeframe}`);
+      return { symbol: symbol.broker_symbol, timeframe, strategies: [] };
+    },
+    alertFn: async () => {},
+    logger: silent
+  });
+
+  await runner.scan({ mode: 'demo' });
+
+  assert.deepEqual(seen, ['XAUUSD H1'],
+    'one promoted combination means one symbol on one timeframe, not thirty pairs');
+});
+
+test('with nothing promoted the broad sweep is kept', async () => {
+  const seen = [];
+  const runner = createScanRunner({
+    loadPromotedPairsFn: async () => new Set(),
+    loadSettingsFn: async () => ({ scanTimeframes: ['H1', 'H4'] }),
+    queryFn: async (sql) => (/FROM strategies/.test(sql)
+      ? [{ id: 1, name: 'trend-breakout', status: 'demo', enabled: 1, params: {} }]
+      : [{ id: 7, broker_symbol: 'XAUUSD', digits: 2, enabled: 1, watched: 1 }]),
+    countOpenPositionsFn: async () => 0,
+    loadEvidenceFn: async () => () => null,
+    evaluateFn: async ({ symbol, timeframe }) => {
+      seen.push(`${symbol.broker_symbol} ${timeframe}`);
+      return { symbol: symbol.broker_symbol, timeframe, strategies: [] };
+    },
+    alertFn: async () => {},
+    logger: silent
+  });
+
+  await runner.scan({ mode: 'demo' });
+
+  // Nothing promoted means nothing has passed yet, and the wide view is the
+  // only useful one - narrowing to an empty set would show a blank screen.
+  assert.deepEqual(seen, ['XAUUSD H1', 'XAUUSD H4']);
 });

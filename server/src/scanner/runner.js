@@ -2,6 +2,7 @@ const { query } = require('../db/pool');
 const { countOpenPositions } = require('../signals/generator');
 const { evaluateSymbolTimeframe } = require('./evaluate');
 const { loadEvidence } = require('./index');
+const { loadPromotedKeys } = require('../strategies/promotions');
 const { loadOperationsSettings } = require('../settings/operations');
 const { alertOpportunity } = require('../alerts/events');
 
@@ -31,6 +32,7 @@ function createScanRunner({
   loadEvidenceFn = loadEvidence,
   countOpenPositionsFn = countOpenPositions,
   queryFn = query,
+  loadPromotedPairsFn = loadPromotedKeys,
   alertFn = alertOpportunity,
   now = () => new Date(),
   logger = console
@@ -73,8 +75,25 @@ function createScanRunner({
 
     try {
       const settings = await loadSettingsFn();
-      const timeframes = settings.scanTimeframes;
       const balance = Number(process.env.ACCOUNT_BALANCE_HINT || 10000);
+
+      /**
+       * Scan what could actually be traded, not the whole watchlist.
+       *
+       * "Scanning 5 symbols across H1, H4, D1, M5, M15, M30" was thirty
+       * symbol-timeframe pairs a scan when two combinations were enabled. The
+       * other twenty-eight could not produce a tradeable signal whatever they
+       * found: the promotion gate refuses them, so every setup they surfaced
+       * was an invitation to act on something the system would then decline.
+       *
+       * Enforcement off means nothing is promoted yet and the broad sweep is
+       * still the useful view, so the old behaviour stays as the fallback.
+       */
+      const promotedPairs = await loadPromotedPairsFn();
+      const narrowed = promotedPairs.size > 0;
+      const timeframes = narrowed
+        ? [...new Set([...promotedPairs].map((k) => k.split('|')[2]))]
+        : settings.scanTimeframes;
 
       /**
        * Enabled strategies only.
@@ -93,9 +112,13 @@ function createScanRunner({
       const strategyRows = await queryFn(
         'SELECT * FROM strategies WHERE enabled = 1 AND superseded_at IS NULL ORDER BY name'
       );
-      const symbols = await queryFn(
+      const allSymbols = await queryFn(
         'SELECT * FROM symbols WHERE watched = 1 OR enabled = 1 ORDER BY broker_symbol'
       );
+      const promotedSymbolIds = new Set([...promotedPairs].map((k) => Number(k.split('|')[1])));
+      const symbols = narrowed
+        ? allSymbols.filter((sym) => promotedSymbolIds.has(sym.id))
+        : allSymbols;
 
       const openPositions = await countOpenPositionsFn(mode);
       const evidenceFor = await loadEvidenceFn();
@@ -106,6 +129,13 @@ function createScanRunner({
         push({
           kind: 'scan_note',
           text: 'No strategies are enabled - nothing has passed the lab yet, so there is nothing to scan for'
+        });
+      } else if (narrowed) {
+        push({
+          kind: 'scan_note',
+          text: `Scanning the ${promotedPairs.size} promoted combination`
+            + `${promotedPairs.size === 1 ? '' : 's'} only - anything else would be refused by the `
+            + 'promotion gate, so surfacing it would invite acting on a trade the system declines'
         });
       }
 

@@ -141,12 +141,27 @@ async function assessSignal({ signal, symbol, mode, balance, openPositions = 0, 
   // terrible surprise; it is an operator's decision to make once the lab has
   // produced something to promote.
   if (settings.requirePromotedCombination && mode !== 'backtest') {
-    const key = { strategyId: signal.strategy_id, symbolId: symbol.id, timeframe };
-    const combinationPromoted = isPromoted(await loadPromotedKeys(), key);
-    add('promoted_combination', combinationPromoted,
-      combinationPromoted
-        ? `${symbol.broker_symbol} ${timeframe} is promoted for this strategy`
-        : `no passing backtest for this strategy on ${symbol.broker_symbol} ${timeframe}`);
+    /**
+     * A missing strategy_id is a wiring fault, not a refusal.
+     *
+     * The key is built from it, so without one every lookup reads
+     * `undefined|<symbol>|<timeframe>` and matches nothing - which silently
+     * blocked every trade on the account while reporting the ordinary "no
+     * passing backtest" message, indistinguishable from an honest refusal.
+     * It is called out separately so the next occurrence names itself.
+     */
+    if (signal.strategy_id === undefined || signal.strategy_id === null) {
+      add('promoted_combination', false,
+        'BUG: the signal carries no strategy_id, so promotion cannot be checked '
+        + '- this refuses every trade until it is fixed');
+    } else {
+      const key = { strategyId: signal.strategy_id, symbolId: symbol.id, timeframe };
+      const combinationPromoted = isPromoted(await loadPromotedKeys(), key);
+      add('promoted_combination', combinationPromoted,
+        combinationPromoted
+          ? `${symbol.broker_symbol} ${timeframe} is promoted for this strategy`
+          : `no passing backtest for this strategy on ${symbol.broker_symbol} ${timeframe}`);
+    }
   } else {
     add('promoted_combination', true,
       settings.requirePromotedCombination

@@ -376,3 +376,87 @@ test('a forced re-check that fails demotes what was trading', async (t) => {
   assert.match(row.demote_reason, /re-check failed/);
   assert.equal((await loadPromotedKeys()).size, 0, 'it stops trading at once');
 });
+
+/**
+ * The wiring, not the logic.
+ *
+ * The gate's own tests passed throughout while nothing on the account could
+ * trade, because they build a signal by hand and include strategy_id. The
+ * generator did not send one, so every key read `undefined|<symbol>|<tf>`,
+ * matched nothing, and every trade was refused with the ordinary "no passing
+ * backtest" message - indistinguishable from an honest refusal.
+ *
+ * So this test goes through generateSignals rather than assessSignal: the
+ * question is whether the two halves agree, and only the real path answers it.
+ */
+test('a promoted combination survives the gate when the generator builds the signal', async (t) => {
+  const ctx = await promoted(t, { timeframe: 'H1' });
+  const { query } = require('../src/db/pool');
+  const { saveRiskSettings } = require('../src/risk/settings');
+  const { generateForTimeframe } = require('../src/signals/generator');
+  const { loadPromotedParams } = require('../src/strategies/promotions');
+
+  await ctx.query("UPDATE strategy_promotions SET stage = 'enabled' WHERE id = ?", [ctx.promotion.id]);
+  await saveRiskSettings({ requirePromotedCombination: true });
+  await query('UPDATE symbols SET market_open = 1, market_checked_at = UTC_TIMESTAMP(), trade_mode = 4 WHERE id = ?', [ctx.symbol.id]);
+
+  // A trending series long enough for macd-trend's 200-bar filter.
+  const rows = [];
+  const start = Date.UTC(2026, 0, 1);
+  for (let i = 0; i < 400; i += 1) {
+    const close = 2000 + i * 0.9 + Math.sin(i / 8) * 4;
+    rows.push([ctx.symbol.id, 'H1', new Date(start + i * 3600000).toISOString().slice(0, 19).replace('T', ' '),
+      close - 0.4, close + 1.4, close - 1.4, close, 500, 0, 10]);
+  }
+  await query(
+    `INSERT INTO candles (symbol_id, timeframe, open_time, open, high, low, close, tick_volume, real_volume, spread)
+     VALUES ${rows.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',')}`,
+    rows.flat()
+  );
+
+  const strategies = await query('SELECT * FROM strategies WHERE id = ?', [ctx.strategy.id]);
+  const symbols = await query('SELECT * FROM symbols WHERE id = ?', [ctx.symbol.id]);
+
+  const result = await generateForTimeframe({
+    mode: 'demo',
+    now: new Date(),
+    timeframe: 'H1',
+    strategies,
+    symbols,
+    autoApprove: false,
+    promoted: await loadPromotedParams()
+  });
+
+  assert.equal(result.evaluated, 1, 'the combination was evaluated');
+
+  const [signal] = await query('SELECT strategy_id, decision FROM signals ORDER BY id DESC LIMIT 1');
+  if (signal) {
+    assert.equal(Number(signal.strategy_id), ctx.strategy.id);
+    const gate = signal.decision.checks.find((c) => c.name === 'promoted_combination');
+    assert.equal(gate.passed, true, `a promoted combination must clear its own gate: ${gate.detail}`);
+    assert.doesNotMatch(gate.detail, /BUG/);
+  }
+});
+
+test('a signal with no strategy_id names the fault instead of hiding it', async (t) => {
+  await promoted(t);
+  const { assessSignal } = require('../src/risk/engine');
+  const { saveRiskSettings } = require('../src/risk/settings');
+  const { query } = require('../src/db/pool');
+
+  await saveRiskSettings({ requirePromotedCombination: true });
+  const [symbol] = await query('SELECT * FROM symbols LIMIT 1');
+
+  const d = await assessSignal({
+    // Deliberately missing strategy_id, which is what the generator used to do.
+    signal: { side: 'BUY', entry: 2000, sl: 1980, tp: 2050, symbol_id: symbol.id, timeframe: 'H1' },
+    symbol: { ...symbol, market_open: 1, market_checked_at: new Date(), trade_mode: 4 },
+    mode: 'demo',
+    balance: 10000
+  });
+
+  const gate = d.checks.find((c) => c.name === 'promoted_combination');
+  assert.equal(gate.passed, false);
+  assert.match(gate.detail, /BUG.*no strategy_id/,
+    'a wiring fault must not read like an ordinary refusal');
+});
