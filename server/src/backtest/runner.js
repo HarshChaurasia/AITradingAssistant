@@ -142,13 +142,30 @@ async function executeRun({
 
   const mergedParams = mergeParams(strategy, params);
   const startingBalance = options.startingBalance ?? 10000;
+  /**
+   * The spread comes from the broker unless the caller insists otherwise.
+   *
+   * One number cannot serve a sweep: 0.0002 is about right for EURUSD and is
+   * effectively ZERO for BTCUSD, whose real spread is twelve dollars. A
+   * multi-symbol sweep with a single spread silently flatters whichever
+   * instruments are priced in the larger units, which on this account is
+   * every one that matters.
+   */
+  const brokerSpread = Number(symbol.spread_points) * Number(symbol.point);
+  const spreadPrice = Number.isFinite(Number(options.spreadPrice))
+    && options.spreadPrice !== null
+    && options.spreadPrice !== ''
+    ? Number(options.spreadPrice)
+    : (brokerSpread > 0 ? brokerSpread : 0);
+
   // A time stop is a property of the setup, not of the caller, so it comes
   // from the strategy's own parameters rather than from the request.
   const runOptions = {
     startingBalance,
     riskPctPerTrade: 1,
     maxHoldBars: mergedParams.maxHoldBars ?? null,
-    ...options
+    ...options,
+    spreadPrice
   };
 
   // A date range narrows the tradeable window and the walk-forward split is
@@ -269,6 +286,7 @@ async function executeRun({
         },
         costs: {
           spreadPrice: runOptions.spreadPrice ?? 0,
+          spreadSource: options.spreadPrice ? 'caller' : 'broker',
           slippagePrice: runOptions.slippagePrice ?? 0,
           commissionPerLot: runOptions.commissionPerLot ?? 0
         }
@@ -304,6 +322,13 @@ async function executeRun({
   return {
     runId, metrics, walkForward, passed, failures, thresholds, skips, backfill,
     bars: span,
+    costs: { spreadPrice, spreadSource: options.spreadPrice ? 'caller' : 'broker' },
+    // Scalps are judged partly on how they leave: a strategy whose exits are
+    // nearly all time stops is not reaching its targets.
+    exits: full.trades.reduce((acc, t) => {
+      acc[t.exitReason] = (acc[t.exitReason] || 0) + 1;
+      return acc;
+    }, {}),
     range: {
       from: candles[rangeFrom]?.open_time ?? null,
       to: candles[Math.max(rangeFrom, rangeTo - 1)]?.open_time ?? null
@@ -383,6 +408,8 @@ async function sweep({
             failures: run.failures,
             skips: run.skips,
             range: run.range,
+            costs: run.costs,
+            exits: run.exits,
             outOfSample: run.walkForward.outOfSample,
             bars: run.bars
           });

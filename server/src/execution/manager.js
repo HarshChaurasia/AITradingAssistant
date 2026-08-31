@@ -21,7 +21,8 @@ const { alertOrderFilled, alertOrderFailed } = require('../alerts/events');
 
 async function loadApprovedSignals(mode) {
   return query(
-    `SELECT sig.*, st.status AS strategy_status
+    `SELECT sig.*, st.status AS strategy_status, st.name AS strategy_name,
+            JSON_EXTRACT(st.params, '$.maxHoldBars') AS max_hold_bars
        FROM signals sig
        JOIN strategies st ON st.id = sig.strategy_id
       WHERE sig.mode = ? AND sig.status = 'approved'
@@ -163,7 +164,14 @@ async function executeSignal({ bridge, signal, mode, balance, claimed = false })
     alertOrderFailed({
       symbol: symbol.broker_symbol,
       reason: result.comment || 'rejected',
-      mode
+      mode,
+      side: signal.side,
+      lot: decision.lot,
+      strategy: signal.strategy_name,
+      timeframe: signal.timeframe,
+      retcode: result.retcode,
+      attempt: signal.send_attempts,
+      maxAttempts: MAX_SEND_ATTEMPTS
     }).catch(() => {});
     await releaseSignal(signal.id, {
       status: signal.send_attempts >= MAX_SEND_ATTEMPTS ? 'rejected' : 'approved',
@@ -205,8 +213,23 @@ async function executeSignal({ bridge, signal, mode, balance, claimed = false })
   );
 
   alertOrderFilled({
-    symbol: symbol.broker_symbol, side: signal.side, lot: decision.lot,
-    ticket: result.ticket, mode
+    symbol: symbol.broker_symbol,
+    side: signal.side,
+    lot: filledLot,
+    ticket: result.ticket,
+    mode,
+    strategy: signal.strategy_name,
+    timeframe: signal.timeframe,
+    entry: fillPrice,
+    sl: Number(signal.sl),
+    tp: signal.tp === null ? null : Number(signal.tp),
+    digits: symbol.digits,
+    riskAmount: decision.riskAmount,
+    balance,
+    reason: signal.reason,
+    // Scalps leave on a clock as well as on price, which changes how a
+    // position still open twenty minutes later should be read.
+    holdBars: signal.max_hold_bars || null
   }).catch(() => {});
 
   return { status: 'filled', tradeId, ticket: result.ticket };

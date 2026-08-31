@@ -1,4 +1,5 @@
 const { query } = require('../db/pool');
+const { alertTradeClosed } = require('../alerts/events');
 const { recordTradeResult } = require('../risk/state');
 
 /**
@@ -58,7 +59,7 @@ async function snapshotEquity(bridge, mode) {
   }
 }
 
-async function reconcile({ bridge, mode = 'demo' }) {
+async function reconcile({ bridge, mode = 'demo', logger = console }) {
   const { positions = [] } = await bridge.positions();
   const openTickets = new Set(positions.map((p) => Number(p.ticket)));
   const byTicket = new Map(positions.map((p) => [Number(p.ticket), p]));
@@ -125,6 +126,47 @@ async function reconcile({ bridge, mode = 'demo' }) {
        VALUES (UTC_TIMESTAMP(), 'system', 'trade_closed', CAST(? AS JSON))`,
       [JSON.stringify({ tradeId: trade.id, ticket, pnl, mode })]
     );
+
+    // Tell someone. Nothing reported closes before, so the first news of a
+    // losing trade was the next time the dashboard happened to be open.
+    try {
+      const [context] = await query(
+        `SELECT sym.broker_symbol, sym.digits, st.name AS strategy_name, sig.timeframe,
+                TIMESTAMPDIFF(MINUTE, t.opened_at, UTC_TIMESTAMP()) AS held_minutes
+           FROM trades t
+           JOIN symbols sym       ON sym.id = t.symbol_id
+           LEFT JOIN signals sig  ON sig.id = t.signal_id
+           LEFT JOIN strategies st ON st.id = sig.strategy_id
+          WHERE t.id = ?`,
+        [trade.id]
+      );
+      const [today] = await query(
+        `SELECT COALESCE(SUM(pnl), 0) AS day_pnl FROM trades
+          WHERE mode = ? AND status = 'CLOSED' AND DATE(closed_at) = UTC_DATE()`,
+        [mode]
+      );
+
+      await alertTradeClosed({
+        symbol: context?.broker_symbol || 'unknown',
+        side: trade.side,
+        lot: trade.lot,
+        ticket,
+        mode,
+        pnl,
+        entry: trade.entry_price,
+        exit: realised ? realised.closePrice : null,
+        digits: context?.digits,
+        strategy: context?.strategy_name,
+        timeframe: context?.timeframe,
+        heldMinutes: context?.held_minutes,
+        exitReason: realised ? 'BROKER' : null,
+        dayPnl: today?.day_pnl
+      });
+    } catch (error) {
+      // An alerting outage must never stop reconciliation: the journal being
+      // correct matters far more than the message being delivered.
+      logger.error(`close alert failed: ${error.message}`);
+    }
 
     closed += 1;
   }

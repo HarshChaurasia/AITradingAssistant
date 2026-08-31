@@ -5,6 +5,133 @@ import { api } from '../api';
 
 const TIMEFRAMES = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 
+/**
+ * What history is stored, and a way to go and get more.
+ *
+ * Every backtest verdict rests on this and nothing showed it. A run reporting
+ * "only 20 trades, 50 required" was usually not a strategy that rarely fires -
+ * it was three weeks of M5 being asked a question that needs a year.
+ *
+ * Coverage is measured in BARS, not in calendar span: a gap-ridden series
+ * whose oldest row is a year old still cannot answer a year's question, and
+ * the bar count is what a backtest actually consumes.
+ */
+function DataCoverage() {
+  const [data, setData] = useState(null);
+  const [job, setJob] = useState(null);
+  const [months, setMonths] = useState(6);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    setData(await api.coverage());
+    setJob(await api.backfillStatus());
+  }, []);
+
+  useEffect(() => {
+    load().catch((e) => setError(e.message));
+    // Polled rather than awaited: a full backfill takes minutes, and a request
+    // held open that long times out somewhere in the middle.
+    const timer = setInterval(() => load().catch(() => {}), 3000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  async function start() {
+    setError(null);
+    try {
+      await api.startBackfill(months);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  if (!data) return <section className="panel"><p className="muted">Reading stored history…</p></section>;
+
+  const running = job?.running;
+  const p = job?.progress;
+  const pct = p?.total ? Math.round((p.done / p.total) * 100) : 0;
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h3>Stored history</h3>
+        <span>months of bars held per symbol and timeframe</span>
+      </div>
+
+      <div className="toolbar">
+        <label className="field">months
+          <select value={months} onChange={(e) => setMonths(Number(e.target.value))} disabled={running}>
+            {[1, 3, 6, 12].map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </label>
+        <button disabled={running} onClick={start}>
+          {running ? 'Backfilling…' : `Backfill ${months} months — every symbol, every timeframe`}
+        </button>
+        {job?.last && !running && (
+          <span className="muted">
+            last run: {job.last.storedBars.toLocaleString()} bars stored across{' '}
+            {job.last.succeeded}/{job.last.combinations} combinations
+            {job.last.failed > 0 && `, ${job.last.failed} failed`}
+          </span>
+        )}
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      {running && p && (
+        <div className="scan-progress">
+          <div className="scan-progress-bar"><span style={{ width: `${pct}%` }} /></div>
+          <span className="muted">
+            {p.done} of {p.total} — {p.symbol} {p.timeframe}
+          </span>
+        </div>
+      )}
+
+      <table className="table scope-grid">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            {data.timeframes.map((tf) => <th key={tf}>{tf}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {data.symbols.map((row) => (
+            <tr key={row.symbolId}>
+              <td>
+                <strong>{row.symbol}</strong>
+                {!row.tradeable && <small className="muted"> watch only</small>}
+              </td>
+              {row.coverage.map((c) => (
+                <td
+                  key={c.timeframe}
+                  className={c.bars === 0 ? 'down' : c.sufficient ? 'up' : 'muted'}
+                  title={c.bars === 0
+                    ? 'nothing stored'
+                    : `${c.bars.toLocaleString()} bars, ${String(c.firstBar).slice(0, 10)} to ${String(c.lastBar).slice(0, 10)}`}
+                >
+                  {c.bars === 0 ? '—' : `${c.months}m`}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p className="muted">
+        <span className="up">green</span> is six months or more — enough for a walk-forward test to
+        reach its 50-trade minimum on most timeframes. Grey is thinner than that; a backtest on it
+        will fail on trade count rather than on merit. Hover a cell for the exact bar count and date
+        range.
+      </p>
+      <p className="muted">
+        A closed market has nothing new to give, so weekend backfills of FX and gold will report
+        fewer bars than asked for. Six months of M5 is about 52,000 bars per symbol, so a full run
+        takes several minutes — it runs in the background and this updates as it goes.
+      </p>
+    </section>
+  );
+}
+
 export default function Markets() {
   const [symbols, setSymbols] = useState([]);
   const [symbolId, setSymbolId] = useState(null);
@@ -46,6 +173,9 @@ export default function Markets() {
   const selected = symbols.find((s) => s.id === symbolId);
 
   return (
+    <>
+    <DataCoverage />
+
     <section className="panel">
       <div className="panel-header">
         <h3>Markets</h3>
@@ -121,5 +251,6 @@ export default function Markets() {
         {selected && ` · min lot ${selected.min_lot} · step ${selected.lot_step} · tick value ${selected.tick_value}`}
       </p>
     </section>
+    </>
   );
 }

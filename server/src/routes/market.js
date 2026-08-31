@@ -5,10 +5,46 @@ const { syncCandles, getCandles, barsForMonths, TIMEFRAMES } = require('../marke
 const { refreshMarketStatus, marketStatus } = require('../market/market-hours');
 const { syncCalendar, upcoming } = require('../news/calendar');
 const { scalpViability } = require('../market/scalp-viability');
+const { coverage, createBackfillJob } = require('../market/coverage');
 const { query } = require('../db/pool');
 
-function createMarketRouter({ bridge }) {
+function createMarketRouter({ bridge, backfillJob = createBackfillJob() }) {
   const router = express.Router();
+
+  /**
+   * What history is stored, per symbol and timeframe.
+   *
+   * Every backtest verdict rests on this and nothing surfaced it: a run
+   * reporting "only 20 trades, 50 required" was usually three weeks of M5
+   * being asked a question that needs a year.
+   */
+  router.get('/coverage', async (req, res, next) => {
+    try {
+      res.json(await coverage());
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/coverage/backfill', (req, res) => {
+    res.json(backfillJob.snapshot());
+  });
+
+  /**
+   * Backfill everything. Returns immediately - the job takes minutes, and a
+   * request held open that long times out somewhere in the middle.
+   */
+  router.post('/coverage/backfill', (req, res) => {
+    if (backfillJob.isRunning()) {
+      return res.status(202).json({ started: false, reason: 'a backfill is already running' });
+    }
+    const months = Math.min(Math.max(Number(req.body?.months) || 6, 1), 24);
+    backfillJob.start(bridge, { months }).catch(() => {
+      // The job records its own failures in the snapshot; a rejected promise
+      // here must not take the process down.
+    });
+    res.status(202).json({ started: true, months });
+  });
 
   // Never propagate a bridge outage as a 500: the dashboard has to stay usable
   // when the MT5 terminal is closed, which is most of the time during setup.

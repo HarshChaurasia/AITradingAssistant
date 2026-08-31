@@ -111,6 +111,14 @@ export const api = {
     request(`/api/news?hours=${hours}&minImpact=${minImpact}`),
   syncNews: () => request('/api/news/sync', { method: 'POST' }),
   scalpViability: () => request('/api/scalp-viability'),
+  coverage: () => request('/api/coverage'),
+  backfillStatus: () => request('/api/coverage/backfill'),
+  startBackfill: (months = 6) =>
+    request('/api/coverage/backfill', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ months })
+    }),
   refreshMarketStatus: () => request('/api/symbols/market-status/refresh', { method: 'POST' }),
   scannerLive: () => request('/api/scanner/live'),
   startScan: (mode = 'demo') =>
